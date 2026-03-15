@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """MicroPDProxyServer.
 
-Ported from vllm-gaudi pd_xpyd/proxy_server.py with minimal dependencies.
-
 The proxy routes incoming OpenAI-compatible requests through two phases:
 
   1. **Prefill** – sends a trimmed request (``stream=False``, ``max_tokens=1``)
@@ -27,6 +25,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 import httpx
+import tiktoken
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -144,12 +143,35 @@ class LoadBalancedScheduler(SchedulingPolicy):
 
 
 # ---------------------------------------------------------------------------
-# Lightweight token counting (no tokenizer library needed)
+# Token counting via tiktoken
 # ---------------------------------------------------------------------------
+
+_encoding = None
+
+
+def _get_encoding():
+    """Lazily load the tiktoken encoding (requires network on first call)."""
+    global _encoding
+    if _encoding is None:
+        try:
+            _encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            logger.warning(
+                "tiktoken encoding unavailable; "
+                "falling back to approximate token counting"
+            )
+    return _encoding
 
 
 def _count_message_tokens(messages):
-    """Rough token count: ~1 token per 4 characters (matches common.py)."""
+    """Count tokens in chat messages using tiktoken."""
+    enc = _get_encoding()
+    if enc is not None:
+        total = 0
+        for m in messages:
+            total += len(enc.encode(m.get("content", "")))
+            total += len(enc.encode(m.get("role", "")))
+        return max(1, total)
     total_chars = sum(
         len(m.get("content", "")) + len(m.get("role", "")) for m in messages
     )
@@ -157,18 +179,21 @@ def _count_message_tokens(messages):
 
 
 def _count_prompt_tokens(prompt):
-    """Count tokens for a prompt string or token list."""
+    """Count tokens for a prompt string or token list using tiktoken."""
+    enc = _get_encoding()
     if isinstance(prompt, str):
+        if enc is not None:
+            return max(1, len(enc.encode(prompt)))
         return max(1, len(prompt) // 4)
     if isinstance(prompt, list):
         if all(isinstance(p, int) for p in prompt):
-            # Already tokenized (flat list of token IDs)
             return len(prompt)
         return sum(
             _count_prompt_tokens(p) if isinstance(p, str) else len(p)
             for p in prompt
         )
-    return 100
+    logger.warning("Unexpected prompt type %s; defaulting to 1 token", type(prompt).__name__)
+    return 1
 
 
 # ---------------------------------------------------------------------------
