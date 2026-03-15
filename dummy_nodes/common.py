@@ -22,7 +22,7 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     model: str = "dummy"
     messages: list[ChatMessage]
-    max_tokens: Optional[int] = Field(default=16, description="Maximum number of tokens to generate")
+    max_tokens: Optional[int] = Field(default=None, description="Maximum number of tokens to generate")
     temperature: Optional[float] = 1.0
     stream: Optional[bool] = False
 

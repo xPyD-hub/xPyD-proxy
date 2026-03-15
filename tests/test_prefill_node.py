@@ -92,7 +92,7 @@ async def test_max_tokens_respected(client: AsyncClient):
 
 
 @pytest.mark.anyio
-async def test_default_max_tokens(client: AsyncClient):
+async def test_max_tokens_not_specified(client: AsyncClient):
     payload = {
         "model": "dummy",
         "messages": [{"role": "user", "content": "Hi"}],
