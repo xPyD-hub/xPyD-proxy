@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Lightweight PD (Prefill-Decode) Proxy Server.
+"""Micro PD Proxy Server.
 
 Ported from vllm-gaudi pd_xpyd/proxy_server.py – adapted for MicroPDProxy
 with minimal dependencies.
