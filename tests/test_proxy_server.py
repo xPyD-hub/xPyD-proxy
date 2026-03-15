@@ -1,5 +1,6 @@
 """Tests for the proxy server."""
 
+import itertools
 import json
 import socket
 import threading
@@ -17,8 +18,6 @@ from proxy_server import (
     create_app,
     parse_instance_spec,
 )
-
-import itertools
 
 # ---------------------------------------------------------------------------
 # Helpers – start real dummy-node servers for the proxy to talk to

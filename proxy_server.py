@@ -162,6 +162,9 @@ def _count_prompt_tokens(prompt):
     if isinstance(prompt, str):
         return max(1, len(prompt) // 4)
     if isinstance(prompt, list):
+        if all(isinstance(p, int) for p in prompt):
+            # Already tokenized (flat list of token IDs)
+            return len(prompt)
         return sum(
             _count_prompt_tokens(p) if isinstance(p, str) else len(p)
             for p in prompt
