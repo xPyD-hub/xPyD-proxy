@@ -1,6 +1,6 @@
 # MicroPDProxy
 
-Micro implementation of PD (Prefill-Decode) Proxy Server.
+MicroPDProxyServer – a lightweight PD (Prefill-Decode) proxy implementation.
 
 This project provides **dummy prefill and decode nodes** with OpenAI-compatible
 `/v1/chat/completions` endpoints, so you can develop and debug a PD-separated

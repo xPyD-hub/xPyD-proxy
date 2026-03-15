@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Micro PD Proxy Server.
+"""MicroPDProxyServer.
 
-Ported from vllm-gaudi pd_xpyd/proxy_server.py – adapted for MicroPDProxy
-with minimal dependencies.
+Ported from vllm-gaudi pd_xpyd/proxy_server.py with minimal dependencies.
 
 The proxy routes incoming OpenAI-compatible requests through two phases:
 
@@ -422,7 +421,7 @@ def create_app(
 
     proxy = Proxy(prefill_instances, decode_instances, scheduling_policy)
 
-    application = FastAPI(title="MicroPDProxy")
+    application = FastAPI(title="MicroPDProxyServer")
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -440,7 +439,7 @@ def create_app(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="MicroPDProxy – lightweight PD proxy server"
+        description="MicroPDProxyServer – lightweight PD proxy server"
     )
     parser.add_argument(
         "--prefill",

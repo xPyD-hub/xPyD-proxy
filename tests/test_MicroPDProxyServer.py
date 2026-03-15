@@ -1,4 +1,4 @@
-"""Tests for the proxy server."""
+"""Tests for MicroPDProxyServer."""
 
 import itertools
 import json
@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
-from proxy_server import (
+from MicroPDProxyServer import (
     LoadBalancedScheduler,
     RoundRobinSchedulingPolicy,
     create_app,
