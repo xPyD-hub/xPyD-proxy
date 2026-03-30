@@ -32,14 +32,128 @@ Notes:
 
 ## 2. Current task
 
-### Task two (IN PROGRESS)
+### Task three (IN PROGRESS)
 
-Continue with task two described below. This is the current active implementation task.
+Continue with task three described below. This is the current active implementation task.
 
 ---
 
+## 3. Task three details
 
-## 3. Task two details
+### Goal
+
+Support a real benchmark-style validation flow using `vllm bench serve` semantics in a local dummy-based setup.
+
+Reference real-world benchmark command:
+
+```bash
+vllm bench serve --host 10.239.129.239 --port 8868 --model /workspace/hf_models/Qwen3-0.6B-Base/ --dataset-name random --random-input-len 3000 --random-output-len 200 --num-prompts 100 --burstiness 100 --request-rate 3.6
+```
+
+For task three:
+
+- install `vllm` first via `pip install vllm`
+- rewrite host / port / model according to the actual local test environment
+- make the benchmark run successfully against:
+  - 2 dummy prefill instances
+  - 2 dummy decode instances
+  - 1 proxy server
+
+### Required topology
+
+- prefill: TP8, DP2
+- decode: TP1, DP16
+
+### Validation target
+
+Task three is considered complete only if the benchmark can run through the proxy successfully under the topology above.
+
+This is not only a command-generation task. It must be validated end-to-end with real running processes.
+
+### Expected work items
+
+- prepare local dummy prefill / decode topology matching the task-three requirement
+- start proxy with the correct parameterized shell script inputs
+- install and invoke `vllm bench serve` with locally adjusted arguments
+- debug any remaining incompatibility in the proxy / dummy setup if the benchmark cannot run through
+
+### Testing / verification
+
+At minimum, verify:
+
+- the benchmark command can connect to the proxy
+- requests are accepted and processed through the proxy
+- the dummy prefill / decode stack is sufficient to support the benchmark path
+- any missing dummy behavior required by the benchmark flow is fixed if necessary
+
+---
+
+--------------------------
+
+## 4. ~~Task two~~ (DONE)
+
+Task two has been implemented and validated.
+
+## 5. Task two details
+
+
+---
+
+## 3. Task three details
+
+### Goal
+
+Support a real benchmark-style validation flow using `vllm bench serve` semantics in a local dummy-based setup.
+
+Reference real-world benchmark command:
+
+```bash
+vllm bench serve --host 10.239.129.239 --port 8868 --model /workspace/hf_models/Qwen3-0.6B-Base/ --dataset-name random --random-input-len 3000 --random-output-len 200 --num-prompts 100 --burstiness 100 --request-rate 3.6
+```
+
+For task three:
+
+- install `vllm` first via `pip install vllm`
+- rewrite host / port / model according to the actual local test environment
+- make the benchmark run successfully against:
+  - 2 dummy prefill instances
+  - 2 dummy decode instances
+  - 1 proxy server
+
+### Required topology
+
+- prefill: TP8, DP2
+- decode: TP1, DP16
+
+### Validation target
+
+Task three is considered complete only if the benchmark can run through the proxy successfully under the topology above.
+
+This is not only a command-generation task. It must be validated end-to-end with real running processes.
+
+### Expected work items
+
+- prepare local dummy prefill / decode topology matching the task-three requirement
+- start proxy with the correct parameterized shell script inputs
+- install and invoke `vllm bench serve` with locally adjusted arguments
+- debug any remaining incompatibility in the proxy / dummy setup if the benchmark cannot run through
+
+### Testing / verification
+
+At minimum, verify:
+
+- the benchmark command can connect to the proxy
+- requests are accepted and processed through the proxy
+- the dummy prefill / decode stack is sufficient to support the benchmark path
+- any missing dummy behavior required by the benchmark flow is fixed if necessary
+
+--------------------------
+
+## 4. ~~Task two~~ (DONE)
+
+Task two has been implemented and validated.
+
+## 5. Task two details
 
 ### Goal
 
@@ -81,7 +195,7 @@ Since the command is long, short aliases such as `-pn`, `-pt`, etc. should also 
 
 ---
 
-## 4. Validation rules
+### Validation rules
 
 The script must validate the input arguments.
 
@@ -103,7 +217,7 @@ nodes <= IP list length
 
 ---
 
-## 5. Topology and mapping rules
+### Topology and mapping rules
 
 ### 5.1 Basic definitions
 
@@ -132,7 +246,7 @@ nodes <= IP list length
 
 ---
 
-## 6. Mapping rules under different TP / world-size relationships
+### Mapping rules under different TP / world-size relationships
 
 ### Case 1: `tp_size <= world_size_per_node`
 
@@ -167,7 +281,7 @@ nodes.
 
 ---
 
-## 7. Implementation constraints
+### Implementation constraints
 
 - Only modify `core/xpyd_start_proxy.sh`.
 - Do not modify other core business logic files.
@@ -178,7 +292,7 @@ nodes.
 
 ---
 
-## 8. Testing requirements
+### Testing requirements
 
 ### 8.1 Same testing requirement as task one
 
@@ -207,27 +321,27 @@ The script should fail clearly and handle invalid input gracefully.
 - Print a clear and understandable error message
 - Do not generate partial / ambiguous proxy arguments
 
----
+## 6. ~~Task one~~ (DONE)
 
-## 3. ~~Task one~~ (DONE)
+The content in `core/` has already been validated on real hardware. The code is considered basically correct.
 
-> The content in `core/` has already been validated on real hardware. The code is considered basically correct.
->
-> So the first task was:
->
-> - without modifying core business logic,
-> - debug `dummy_nodes`,
-> - and make `dummy_nodes` work correctly under the following proxy server configurations:
->
-> ### Required configurations
->
-> - `bash xpyd_start_proxy.sh 1 2 1`
-> - `bash xpyd_start_proxy.sh 2 2 1`
-> - `bash xpyd_start_proxy.sh 1 2 2`
-> - `bash xpyd_start_proxy.sh 1 2 4`
-> - `bash xpyd_start_proxy.sh 1 2 8`
-> - `bash xpyd_start_proxy.sh 2 2 2`
-> - `bash xpyd_start_proxy.sh 2 4 1`
-> - `bash xpyd_start_proxy.sh 2 4 2`
->
-> After debugging, submit PRs.
+## 7. Task one details
+
+The first task was:
+
+- without modifying core business logic,
+- debug `dummy_nodes`,
+- and make `dummy_nodes` work correctly under the following proxy server configurations:
+
+### Required configurations
+
+- `bash xpyd_start_proxy.sh 1 2 1`
+- `bash xpyd_start_proxy.sh 2 2 1`
+- `bash xpyd_start_proxy.sh 1 2 2`
+- `bash xpyd_start_proxy.sh 1 2 4`
+- `bash xpyd_start_proxy.sh 1 2 8`
+- `bash xpyd_start_proxy.sh 2 2 2`
+- `bash xpyd_start_proxy.sh 2 4 1`
+- `bash xpyd_start_proxy.sh 2 4 2`
+
+After debugging, submit PRs.
