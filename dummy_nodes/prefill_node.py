@@ -11,7 +11,7 @@ import asyncio
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from dummy_nodes.common import (
     ChatCompletionChunk,
@@ -19,10 +19,11 @@ from dummy_nodes.common import (
     ChatCompletionResponse,
     Choice,
     ChoiceMessage,
-    CompletionChunk,
     CompletionChoice,
+    CompletionChunk,
     CompletionRequest,
     CompletionResponse,
+    CompletionStreamChoice,
     DeltaMessage,
     StreamChoice,
     UsageInfo,
@@ -56,11 +57,15 @@ async def _sleep_for_prompt(request: CompletionRequest) -> int:
     return prompt_tokens
 
 
-def _build_chat_response(request: ChatCompletionRequest, request_id: str) -> ChatCompletionResponse:
+def _build_chat_response(
+    request: ChatCompletionRequest, request_id: str
+) -> ChatCompletionResponse:
     prompt_tokens = count_prompt_tokens_from_messages(request.messages)
-    max_tokens = get_effective_max_tokens(request.max_completion_tokens, request.max_tokens)
-    completion_tokens = min(max_tokens, len(render_dummy_text(max_tokens)))
+    max_tokens = get_effective_max_tokens(
+        request.max_completion_tokens, request.max_tokens
+    )
     text = render_dummy_text(max_tokens)
+    completion_tokens = len(text)
     return ChatCompletionResponse(
         id=request_id,
         created=now_ts(),
@@ -68,16 +73,19 @@ def _build_chat_response(request: ChatCompletionRequest, request_id: str) -> Cha
         choices=[Choice(message=ChoiceMessage(content=text), finish_reason="stop")],
         usage=UsageInfo(
             prompt_tokens=prompt_tokens,
-            completion_tokens=max_tokens,
-            total_tokens=prompt_tokens + max_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
         ),
     )
 
 
-def _build_completion_response(request: CompletionRequest, request_id: str) -> CompletionResponse:
+def _build_completion_response(
+    request: CompletionRequest, request_id: str
+) -> CompletionResponse:
     prompt_tokens = count_prompt_tokens_from_prompt(request.prompt)
     max_tokens = get_effective_max_tokens(request.max_tokens)
     text = render_dummy_text(max_tokens)
+    completion_tokens = len(text)
     return CompletionResponse(
         id=request_id,
         created=now_ts(),
@@ -85,15 +93,23 @@ def _build_completion_response(request: CompletionRequest, request_id: str) -> C
         choices=[CompletionChoice(text=text, finish_reason="stop")],
         usage=UsageInfo(
             prompt_tokens=prompt_tokens,
-            completion_tokens=max_tokens,
-            total_tokens=prompt_tokens + max_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
         ),
     )
 
 
 async def _chat_stream(request: ChatCompletionRequest, request_id: str):
-    max_tokens = get_effective_max_tokens(request.max_completion_tokens, request.max_tokens)
-    yield f"data: {ChatCompletionChunk(id=request_id, created=now_ts(), model=request.model, choices=[StreamChoice(delta=DeltaMessage(role='assistant'))]).model_dump_json()}\n\n"
+    max_tokens = get_effective_max_tokens(
+        request.max_completion_tokens, request.max_tokens
+    )
+    initial_chunk = ChatCompletionChunk(
+        id=request_id,
+        created=now_ts(),
+        model=request.model,
+        choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
+    )
+    yield f"data: {initial_chunk.model_dump_json()}\n\n"
     text = render_dummy_text(max_tokens)
     for token in text:
         chunk = ChatCompletionChunk(
@@ -122,7 +138,7 @@ async def _completion_stream(request: CompletionRequest, request_id: str):
             id=request_id,
             created=now_ts(),
             model=request.model,
-            choices=[CompletionChoice(text=token)],
+            choices=[CompletionStreamChoice(text=token)],
         )
         yield f"data: {chunk.model_dump_json()}\n\n"
         await asyncio.sleep(0)
@@ -130,7 +146,7 @@ async def _completion_stream(request: CompletionRequest, request_id: str):
         id=request_id,
         created=now_ts(),
         model=request.model,
-        choices=[CompletionChoice(text="", finish_reason="stop")],
+        choices=[CompletionStreamChoice(text="", finish_reason="stop")],
     )
     yield f"data: {finish.model_dump_json()}\n\n"
     yield "data: [DONE]\n\n"
@@ -146,7 +162,9 @@ async def chat_completions(request: ChatCompletionRequest):
     request_id = generate_id("chatcmpl")
     await _sleep_for_messages(request)
     if request.stream:
-        return StreamingResponse(_chat_stream(request, request_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _chat_stream(request, request_id), media_type="text/event-stream"
+        )
     return _build_chat_response(request, request_id)
 
 
@@ -155,7 +173,9 @@ async def completions(request: CompletionRequest):
     request_id = generate_id("cmpl")
     await _sleep_for_prompt(request)
     if request.stream:
-        return StreamingResponse(_completion_stream(request, request_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _completion_stream(request, request_id), media_type="text/event-stream"
+        )
     return _build_completion_response(request, request_id)
 
 

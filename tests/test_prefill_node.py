@@ -63,7 +63,7 @@ async def test_streaming(client: AsyncClient):
     assert "text/event-stream" in resp.headers["content-type"]
 
     lines = resp.text.strip().split("\n")
-    data_lines = [l for l in lines if l.startswith("data: ")]
+    data_lines = [line for line in lines if line.startswith("data: ")]
 
     # Should have: 1 role chunk + 5 content chunks + 1 finish chunk + 1 [DONE]
     assert len(data_lines) == 8  # 1 + 5 + 1 + 1

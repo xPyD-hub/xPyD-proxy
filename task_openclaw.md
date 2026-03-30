@@ -1,4 +1,4 @@
-1. 这个文件是最核心的功能文件 https://github.com/hlin99/MicroPDProxy/blob/main/core/MicroPDProxyServer.py 
+1. 这个文件是最核心的功能文件 https://github.com/hlin99/MicroPDProxy/blob/main/core/MicroPDProxyServer.py
 	使用方法
 		a. Adjust proxy server, xpyd_start_proxy.sh
 			# Adjust Prefill/Decode IPs

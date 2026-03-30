@@ -19,10 +19,10 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -58,6 +58,7 @@ class CompletionRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
 
 class UsageInfo(BaseModel):
     prompt_tokens: int = 0
@@ -104,6 +105,7 @@ class CompletionResponse(BaseModel):
 # Streaming (SSE) response models
 # ---------------------------------------------------------------------------
 
+
 class DeltaMessage(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
@@ -140,6 +142,7 @@ class CompletionChunk(BaseModel):
 # ---------------------------------------------------------------------------
 # Model metadata
 # ---------------------------------------------------------------------------
+
 
 class ModelCard(BaseModel):
     id: str

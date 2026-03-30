@@ -9,15 +9,15 @@ import time
 import pytest
 import uvicorn
 from httpx import ASGITransport, AsyncClient
-
-from dummy_nodes.decode_node import app as decode_app
-from dummy_nodes.prefill_node import app as prefill_app
 from MicroPDProxyServer import (
     LoadBalancedScheduler,
     RoundRobinSchedulingPolicy,
     create_app,
     parse_instance_spec,
 )
+
+from dummy_nodes.decode_node import app as decode_app
+from dummy_nodes.prefill_node import app as prefill_app
 
 # ---------------------------------------------------------------------------
 # Helpers – start real dummy-node servers for the proxy to talk to
@@ -35,9 +35,7 @@ _DECODE_PORT = _free_port()
 
 
 def _run_server(app, port):
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="error"
-    )
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     uvicorn.Server(config).run()
 
 
@@ -128,7 +126,7 @@ async def test_streaming(client: AsyncClient):
     assert "text/event-stream" in resp.headers["content-type"]
 
     lines = resp.text.strip().split("\n")
-    data_lines = [l for l in lines if l.startswith("data: ")]
+    data_lines = [line for line in lines if line.startswith("data: ")]
 
     # 1 role + 5 content + 1 finish + 1 [DONE] = 8
     assert len(data_lines) == 8
@@ -161,7 +159,7 @@ async def test_streaming_token_count(client: AsyncClient):
 
     lines = resp.text.strip().split("\n")
     data_lines = [
-        l for l in lines if l.startswith("data: ") and l != "data: [DONE]"
+        line for line in lines if line.startswith("data: ") and line != "data: [DONE]"
     ]
 
     content_chunks = 0
