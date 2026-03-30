@@ -2,9 +2,17 @@
 
 MicroPDProxyServer – a lightweight PD (Prefill-Decode) proxy implementation.
 
-This project provides **dummy prefill and decode nodes** with OpenAI-compatible
-`/v1/chat/completions` endpoints, so you can develop and debug a PD-separated
-proxy without any GPU or model dependencies.
+This project provides **dummy prefill and decode nodes** for local development
+and debugging of a PD-separated proxy without any GPU or model dependencies.
+
+The dummy nodes now expose the minimum compatibility surface required by the
+validated proxy implementation under `core/`, including:
+
+- `/v1/models`
+- `/v1/completions`
+- `/v1/chat/completions`
+- `/health`
+- `/ping`
 
 ## Quick Start
 
@@ -20,7 +28,7 @@ uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
 
 ## Usage
 
-Both nodes expose an OpenAI-compatible chat completions endpoint:
+Both nodes expose OpenAI-compatible completion/chat-completion endpoints:
 
 ```bash
 # Non-streaming request
@@ -54,5 +62,19 @@ curl http://localhost:8200/v1/chat/completions \
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v
+python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v
+python -m pytest tests/test_proxy_matrix.py -v
 ```
+
+The matrix test validates the task combinations below against the real
+`core/MicroPDProxyServer.py` implementation (without changing the core business
+logic):
+
+- `1 2 1`
+- `2 2 1`
+- `1 2 2`
+- `1 2 4`
+- `1 2 8`
+- `2 2 2`
+- `2 4 1`
+- `2 4 2`

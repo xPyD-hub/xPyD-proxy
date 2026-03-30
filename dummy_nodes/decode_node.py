@@ -1,86 +1,79 @@
-"""Dummy Decode Node – OpenAI-compatible FastAPI server.
+"""Dummy decode node compatible with the proxy in ``core/``."""
 
-Simulates the *decode* (autoregressive generation) phase of PD-separated
-inference:
-  • Accepts a ChatCompletion request.
-  • Generates ``max_tokens`` dummy tokens one-by-one, each with a small
-    artificial delay to mimic per-token decode latency.
-
-Usage:
-    uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
-"""
+from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from dummy_nodes.common import (
-    DUMMY_TOKENS,
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
     Choice,
     ChoiceMessage,
+    CompletionChunk,
+    CompletionChoice,
+    CompletionRequest,
+    CompletionResponse,
     DeltaMessage,
     StreamChoice,
     UsageInfo,
-    count_prompt_tokens,
+    build_models_response,
+    count_prompt_tokens_from_messages,
+    count_prompt_tokens_from_prompt,
     generate_id,
+    get_effective_max_tokens,
     now_ts,
+    render_dummy_text,
 )
 
 DECODE_DELAY_PER_TOKEN: float = float(os.getenv("DECODE_DELAY_PER_TOKEN", "0.01"))
-"""Simulated per-decode-token latency in seconds (default 10 ms)."""
 
 app = FastAPI(title="Dummy Decode Node")
 
 
-def _build_non_stream_response(
-    request: ChatCompletionRequest,
-    request_id: str,
-) -> ChatCompletionResponse:
-    prompt_tokens = count_prompt_tokens(request.messages)
-    max_tokens = request.max_tokens or 16
-    completion_tokens = min(max_tokens, len(DUMMY_TOKENS))
-    text = "".join(DUMMY_TOKENS[:completion_tokens])
-
+def _build_chat_response(request: ChatCompletionRequest, request_id: str) -> ChatCompletionResponse:
+    prompt_tokens = count_prompt_tokens_from_messages(request.messages)
+    max_tokens = get_effective_max_tokens(request.max_completion_tokens, request.max_tokens)
+    text = render_dummy_text(max_tokens)
     return ChatCompletionResponse(
         id=request_id,
         created=now_ts(),
         model=request.model,
-        choices=[
-            Choice(
-                message=ChoiceMessage(content=text),
-                finish_reason="stop",
-            )
-        ],
+        choices=[Choice(message=ChoiceMessage(content=text), finish_reason="stop")],
         usage=UsageInfo(
             prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=prompt_tokens + completion_tokens,
+            completion_tokens=max_tokens,
+            total_tokens=prompt_tokens + max_tokens,
         ),
     )
 
 
-async def _stream_generator(request: ChatCompletionRequest, request_id: str):
-    """Yield SSE frames (``data: <json>\\n\\n``)."""
-    max_tokens = request.max_tokens or 16
-
-    # First chunk: role
-    chunk = ChatCompletionChunk(
+def _build_completion_response(request: CompletionRequest, request_id: str) -> CompletionResponse:
+    prompt_tokens = count_prompt_tokens_from_prompt(request.prompt)
+    max_tokens = get_effective_max_tokens(request.max_tokens)
+    text = render_dummy_text(max_tokens)
+    return CompletionResponse(
         id=request_id,
         created=now_ts(),
         model=request.model,
-        choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
+        choices=[CompletionChoice(text=text, finish_reason="stop")],
+        usage=UsageInfo(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=max_tokens,
+            total_tokens=prompt_tokens + max_tokens,
+        ),
     )
-    yield f"data: {chunk.model_dump_json()}\n\n"
 
-    # Content chunks – each with a decode delay
-    for i in range(min(max_tokens, len(DUMMY_TOKENS))):
-        token = DUMMY_TOKENS[i]
+
+async def _chat_stream(request: ChatCompletionRequest, request_id: str):
+    max_tokens = get_effective_max_tokens(request.max_completion_tokens, request.max_tokens)
+    yield f"data: {ChatCompletionChunk(id=request_id, created=now_ts(), model=request.model, choices=[StreamChoice(delta=DeltaMessage(role='assistant'))]).model_dump_json()}\n\n"
+    text = render_dummy_text(max_tokens)
+    for token in text:
         chunk = ChatCompletionChunk(
             id=request_id,
             created=now_ts(),
@@ -89,8 +82,6 @@ async def _stream_generator(request: ChatCompletionRequest, request_id: str):
         )
         yield f"data: {chunk.model_dump_json()}\n\n"
         await asyncio.sleep(DECODE_DELAY_PER_TOKEN)
-
-    # Final chunk
     chunk = ChatCompletionChunk(
         id=request_id,
         created=now_ts(),
@@ -101,19 +92,55 @@ async def _stream_generator(request: ChatCompletionRequest, request_id: str):
     yield "data: [DONE]\n\n"
 
 
+async def _completion_stream(request: CompletionRequest, request_id: str):
+    max_tokens = get_effective_max_tokens(request.max_tokens)
+    text = render_dummy_text(max_tokens)
+    for token in text:
+        chunk = CompletionChunk(
+            id=request_id,
+            created=now_ts(),
+            model=request.model,
+            choices=[CompletionChoice(text=token)],
+        )
+        yield f"data: {chunk.model_dump_json()}\n\n"
+        await asyncio.sleep(DECODE_DELAY_PER_TOKEN)
+    finish = CompletionChunk(
+        id=request_id,
+        created=now_ts(),
+        model=request.model,
+        choices=[CompletionChoice(text="", finish_reason="stop")],
+    )
+    yield f"data: {finish.model_dump_json()}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+@app.get("/v1/models")
+async def get_models():
+    return build_models_response()
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    request_id = generate_id()
-
+    request_id = generate_id("chatcmpl")
     if request.stream:
-        return StreamingResponse(
-            _stream_generator(request, request_id),
-            media_type="text/event-stream",
-        )
+        return StreamingResponse(_chat_stream(request, request_id), media_type="text/event-stream")
+    return _build_chat_response(request, request_id)
 
-    return _build_non_stream_response(request, request_id)
+
+@app.post("/v1/completions")
+async def completions(request: CompletionRequest):
+    request_id = generate_id("cmpl")
+    if request.stream:
+        return StreamingResponse(_completion_stream(request, request_id), media_type="text/event-stream")
+    return _build_completion_response(request, request_id)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "node_type": "decode"}
+
+
+@app.get("/ping", response_class=PlainTextResponse)
+@app.post("/ping", response_class=PlainTextResponse)
+async def ping():
+    return "pong"
