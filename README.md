@@ -28,6 +28,11 @@ uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
 
 ## Usage
 
+Useful docs:
+
+- `docs/xpyd_start_proxy_usage.md` — parameterized script usage and topology rules
+- `docs/one_click_dummy_proxy_setup.md` — end-to-end local dummy + proxy setup guide
+
 Both nodes expose OpenAI-compatible completion/chat-completion endpoints:
 
 ```bash
