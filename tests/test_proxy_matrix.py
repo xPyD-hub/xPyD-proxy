@@ -65,7 +65,18 @@ def _wait_http_ok(url: str, timeout: float = 40.0) -> None:
 
 def _spawn_node(module: str, port: int) -> subprocess.Popen:
     return subprocess.Popen(
-        [PYTHON, "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
+        [
+            PYTHON,
+            "-m",
+            "uvicorn",
+            module,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
         cwd=REPO_ROOT,
         env=ENV,
         stdout=subprocess.PIPE,
@@ -74,7 +85,9 @@ def _spawn_node(module: str, port: int) -> subprocess.Popen:
     )
 
 
-def _spawn_proxy(prefill_instances: list[str], decode_instances: list[str], port: int) -> subprocess.Popen:
+def _spawn_proxy(
+    prefill_instances: list[str], decode_instances: list[str], port: int
+) -> subprocess.Popen:
     command = [
         PYTHON,
         "core/MicroPDProxyServer.py",
@@ -165,7 +178,12 @@ def test_proxy_matrix(prefill_count: int, decode_count: int, tp_size: int):
 
         payload = {
             "model": DUMMY_MODEL_ID,
-            "messages": [{"role": "user", "content": f"matrix {prefill_count}-{decode_count}-{tp_size}"}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"matrix {prefill_count}-{decode_count}-{tp_size}",
+                }
+            ],
             "max_tokens": 4,
             "stream": False,
         }
