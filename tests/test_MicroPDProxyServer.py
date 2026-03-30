@@ -6,6 +6,7 @@ import os
 import socket
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 import uvicorn
@@ -121,8 +122,11 @@ async def test_health(client: AsyncClient):
     resp = await client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
-    assert data["node_type"] == "proxy"
+    # Proxy /health returns per-instance results keyed by host:port
+    assert len(data) > 0
+    for inst, info in data.items():
+        assert info["status"] == 200
+        assert info["data"]["status"] == "ok"
 
 
 @pytest.mark.anyio
@@ -242,7 +246,9 @@ def test_round_robin_schedule_completion_exists():
     )
 
 
-def test_load_balanced_scheduling():
+@patch("MicroPDProxyServer.query_instance_model_len", return_value=131072)
+def test_load_balanced_scheduling(mock_query):
+    """Test LoadBalancedScheduler distributes requests across instances."""
     prefill = ["p1:1", "p2:2"]
     decode = ["d1:1", "d2:2"]
     policy = LoadBalancedScheduler(prefill, decode)
