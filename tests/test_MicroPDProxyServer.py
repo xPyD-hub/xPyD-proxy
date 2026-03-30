@@ -246,7 +246,7 @@ def test_round_robin_schedule_completion_exists():
     )
 
 
-@patch("MicroPDProxyServer.query_instance_model_len", return_value=131072)
+@patch("MicroPDProxyServer.query_instance_model_len", return_value=[131072, 131072])
 def test_load_balanced_scheduling(mock_query):
     """Test LoadBalancedScheduler distributes requests across instances."""
     prefill = ["p1:1", "p2:2"]
