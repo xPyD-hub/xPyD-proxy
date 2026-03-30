@@ -256,15 +256,15 @@ def test_load_balanced_scheduling(mock_query):
     p_cycler = itertools.cycle(prefill)
     d_cycler = itertools.cycle(decode)
 
-    r1 = policy.schedule(p_cycler, is_prompt=True, request_len=100)
+    r1 = policy.schedule(p_cycler, is_prompt=True, request_len=100, max_tokens=50)
     assert r1 in prefill
 
-    r2 = policy.schedule(p_cycler, is_prompt=True, request_len=100)
+    r2 = policy.schedule(p_cycler, is_prompt=True, request_len=100, max_tokens=50)
     assert r2 in prefill
     assert r2 != r1
 
-    d1 = policy.schedule(d_cycler, is_prompt=False, request_len=50)
+    d1 = policy.schedule(d_cycler, is_prompt=False, request_len=50, max_tokens=50)
     assert d1 in decode
-    d2 = policy.schedule(d_cycler, is_prompt=False, request_len=50)
+    d2 = policy.schedule(d_cycler, is_prompt=False, request_len=50, max_tokens=50)
     assert d2 in decode
     assert d2 != d1
