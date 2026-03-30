@@ -1,121 +1,290 @@
-# bash
-#
-if [ -z "$1" ]; then
-    echo "please input P instance number, D instance number, TP size of D instance, advanced/basic/benchmark proxy mode"
-    echo "run with default mode P=1, D=2, TP size=1, advanced"
-    P_INSTANCE_NUMBER=1
-    D_INSTANCE_NUMBER=2
-    NUM_DECODE=8
-else
-    P_INSTANCE_NUMBER=$1
-fi
+#!/usr/bin/env bash
 
-if [ -z "$2" ]; then
-    echo "please input P instance number, D instance number, TP size of D instance, advanced/basic/benchmark proxy mode"
-    echo "run with P=$P_INSTANCE_NUMBER, D=2, TP size=1, advanced"
-    D_INSTANCE_NUMBER=2
-    TP_SIZE=1
-    NUM_DECODE=$((8 / TP_SIZE))
-else
-    D_INSTANCE_NUMBER=$2
-fi
+set -euo pipefail
 
-if [ -z "$3" ]; then
-    echo "please input P instance number, D instance number, TP size of D instance, advanced/basic/benchmark proxy mode"
-    echo "run with P=$P_INSTANCE_NUMBER, D=$D_INSTANCE_NUMBER, TP size=1, advanced"
-    TP_SIZE=1
-    NUM_DECODE=$((8 / TP_SIZE))
-else
-    TP_SIZE=$3
-    NUM_DECODE=$((8 / TP_SIZE))
-fi
-
-PROXY_MODE=0
-
-if [ "$4" == "benchmark" ]; then
-    PROXY_MODE=2
-    echo " Benchmark mode enabled"
-fi
-
-if [ "$4" == "basic" ]; then
-    PROXY_MODE=1
-    echo " Basic mode enabled"
-fi
-
-if [ "$4" == "benchmark_decode" ]; then
-    PROXY_MODE=3
-    echo " Benchmark Decode mode enabled"
-fi
-# For backward compatibility.....
-
-if [ "$5" == "benchmark" ]; then
-    PROXY_MODE=2
-    echo " Benchmark mode enabled"
-fi
-
-if [ "$5" == "basic" ]; then
-    PROXY_MODE=1
-    echo " Basic mode enabled"
-fi
-
-if [ "$5" == "benchmark_decode" ]; then
-    PROXY_MODE=3
-    echo " Benchmark Decode mode enabled"
-fi
-#For OAM
+# For OAM
 DECODE_IPS=("10.239.129.81" "10.239.129.165" "10.239.129.67" "10.239.129.21")
-#For PCIE
-# DECODE_IPS=("10.112.110.161" "10.112.110.148")
-
-DBASE_PORT=8200
-DECODE_ARGS=""
-
-for ((i=0; i<$NUM_DECODE; i++)); do
-    PORT=$((DBASE_PORT + i))
-    for ((j=0; j<D_INSTANCE_NUMBER; j++)); do
-	IP=${DECODE_IPS[$j]}
-	DECODE_ARGS="$DECODE_ARGS ${IP}:${PORT}"
-    done
-done
-
-#For OAM
 PREFILL_IPS=("10.239.129.9" "10.239.129.67" "10.239.129.21" "10.239.128.165" "10.239.128.244" "10.239.128.153")
-#For PCIE
-# PREFILL_IPS=("10.112.110.157")
 
-PBASE_PORT=8100
-PREFILL_ARGS=""
+DEFAULT_PREFILL_BASE_PORT=8100
+DEFAULT_DECODE_BASE_PORT=8200
+DEFAULT_PROXY_PORT=8868
+DEFAULT_MODE="advanced"
 
-PORT=$PBASE_PORT
-for ((i=0; i<P_INSTANCE_NUMBER; i++)); do
-    IP=${PREFILL_IPS[$i]}
-    PREFILL_ARGS="$PREFILL_ARGS ${IP}:${PORT}"
+usage() {
+    cat <<'EOF'
+Usage:
+  bash xpyd_start_proxy.sh \
+    --prefill-nodes <n> --prefill-tp-size <n> --prefill-dp-size <n> --prefill-world-size-per-node <n> \
+    --decode-nodes <n>  --decode-tp-size <n>  --decode-dp-size <n>  --decode-world-size-per-node <n> \
+    [--prefill-base-port <n>] [--decode-base-port <n>] [--mode advanced|basic|benchmark|benchmark_decode]
+
+Short aliases:
+  -pn  -pt  -pd  -pw
+  -dn  -dt  -dd  -dw
+
+Notes:
+  - tp_size and dp_size must be powers of two.
+  - tp_size * dp_size must equal nodes * world_size_per_node.
+  - One instance = one TP group.
+  - Instance count = dp_size.
+  - One instance exposes only one IP:PORT to proxy.
+EOF
+}
+
+error() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+is_positive_int() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_power_of_two() {
+    local value=$1
+    (( value > 0 && (value & (value - 1)) == 0 ))
+}
+
+require_value() {
+    local flag=$1
+    local value=${2:-}
+    if [[ -z "$value" ]]; then
+        error "Missing value for $flag"
+    fi
+}
+
+validate_positive_int() {
+    local name=$1
+    local value=$2
+    if ! is_positive_int "$value"; then
+        error "$name must be a positive integer, got: $value"
+    fi
+}
+
+validate_power_of_two() {
+    local name=$1
+    local value=$2
+    if ! is_power_of_two "$value"; then
+        error "$name must be a power of two, got: $value"
+    fi
+}
+
+validate_topology() {
+    local role=$1
+    local nodes=$2
+    local tp_size=$3
+    local dp_size=$4
+    local world_size_per_node=$5
+    local ip_count=$6
+
+    validate_positive_int "$role nodes" "$nodes"
+    validate_positive_int "$role tp_size" "$tp_size"
+    validate_positive_int "$role dp_size" "$dp_size"
+    validate_positive_int "$role world_size_per_node" "$world_size_per_node"
+
+    validate_power_of_two "$role tp_size" "$tp_size"
+    validate_power_of_two "$role dp_size" "$dp_size"
+
+    if (( tp_size * dp_size != nodes * world_size_per_node )); then
+        error "$role topology invalid: tp_size * dp_size must equal nodes * world_size_per_node"
+    fi
+
+    if (( nodes > ip_count )); then
+        error "$role nodes exceeds available IP list length ($nodes > $ip_count)"
+    fi
+}
+
+build_instance_endpoints() {
+    local role=$1
+    local nodes=$2
+    local tp_size=$3
+    local dp_size=$4
+    local world_size_per_node=$5
+    local base_port=$6
+    local array_name=$7
+    local -n ip_list="$array_name"
+
+    local -a node_instance_counts=()
+    local -a endpoints=()
+    local instance_index start_rank main_node local_index port
+
+    for ((instance_index = 0; instance_index < dp_size; instance_index++)); do
+        start_rank=$((instance_index * tp_size))
+        main_node=$((start_rank / world_size_per_node))
+
+        if (( main_node >= nodes )); then
+            error "$role topology expansion failed: computed main node index $main_node out of range"
+        fi
+
+        local_index=${node_instance_counts[$main_node]:-0}
+        port=$((base_port + local_index))
+        node_instance_counts[$main_node]=$((local_index + 1))
+        endpoints+=("${ip_list[$main_node]}:${port}")
+    done
+
+    printf '%s ' "${endpoints[@]}"
+}
+
+PREFILL_NODES=""
+PREFILL_TP_SIZE=""
+PREFILL_DP_SIZE=""
+PREFILL_WORLD_SIZE_PER_NODE=""
+DECODE_NODES=""
+DECODE_TP_SIZE=""
+DECODE_DP_SIZE=""
+DECODE_WORLD_SIZE_PER_NODE=""
+PREFILL_BASE_PORT=$DEFAULT_PREFILL_BASE_PORT
+DECODE_BASE_PORT=$DEFAULT_DECODE_BASE_PORT
+MODE=$DEFAULT_MODE
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --prefill-nodes|-pn)
+            require_value "$1" "${2:-}"
+            PREFILL_NODES=$2
+            shift 2
+            ;;
+        --prefill-tp-size|-pt)
+            require_value "$1" "${2:-}"
+            PREFILL_TP_SIZE=$2
+            shift 2
+            ;;
+        --prefill-dp-size|-pd)
+            require_value "$1" "${2:-}"
+            PREFILL_DP_SIZE=$2
+            shift 2
+            ;;
+        --prefill-world-size-per-node|-pw)
+            require_value "$1" "${2:-}"
+            PREFILL_WORLD_SIZE_PER_NODE=$2
+            shift 2
+            ;;
+        --decode-nodes|-dn)
+            require_value "$1" "${2:-}"
+            DECODE_NODES=$2
+            shift 2
+            ;;
+        --decode-tp-size|-dt)
+            require_value "$1" "${2:-}"
+            DECODE_TP_SIZE=$2
+            shift 2
+            ;;
+        --decode-dp-size|-dd)
+            require_value "$1" "${2:-}"
+            DECODE_DP_SIZE=$2
+            shift 2
+            ;;
+        --decode-world-size-per-node|-dw)
+            require_value "$1" "${2:-}"
+            DECODE_WORLD_SIZE_PER_NODE=$2
+            shift 2
+            ;;
+        --prefill-base-port)
+            require_value "$1" "${2:-}"
+            PREFILL_BASE_PORT=$2
+            shift 2
+            ;;
+        --decode-base-port)
+            require_value "$1" "${2:-}"
+            DECODE_BASE_PORT=$2
+            shift 2
+            ;;
+        --mode|-m)
+            require_value "$1" "${2:-}"
+            MODE=$2
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown argument: $1"
+            ;;
+    esac
 done
 
-if [ "$PROXY_MODE" == 2 ]; then
-    CMD="python3 ./MicroPDProxyServer.py \
+for required_name in \
+    PREFILL_NODES PREFILL_TP_SIZE PREFILL_DP_SIZE PREFILL_WORLD_SIZE_PER_NODE \
+    DECODE_NODES DECODE_TP_SIZE DECODE_DP_SIZE DECODE_WORLD_SIZE_PER_NODE; do
+    if [[ -z "${!required_name}" ]]; then
+        error "Missing required argument: ${required_name,,}. Run with --help for usage."
+    fi
+done
+
+validate_positive_int "prefill base port" "$PREFILL_BASE_PORT"
+validate_positive_int "decode base port" "$DECODE_BASE_PORT"
+
+validate_topology "prefill" \
+    "$PREFILL_NODES" \
+    "$PREFILL_TP_SIZE" \
+    "$PREFILL_DP_SIZE" \
+    "$PREFILL_WORLD_SIZE_PER_NODE" \
+    "${#PREFILL_IPS[@]}"
+
+validate_topology "decode" \
+    "$DECODE_NODES" \
+    "$DECODE_TP_SIZE" \
+    "$DECODE_DP_SIZE" \
+    "$DECODE_WORLD_SIZE_PER_NODE" \
+    "${#DECODE_IPS[@]}"
+
+if [[ -z "${model_path:-}" ]]; then
+    error "model_path environment variable is not set"
+fi
+
+PREFILL_ARGS=$(build_instance_endpoints \
+    "prefill" \
+    "$PREFILL_NODES" \
+    "$PREFILL_TP_SIZE" \
+    "$PREFILL_DP_SIZE" \
+    "$PREFILL_WORLD_SIZE_PER_NODE" \
+    "$PREFILL_BASE_PORT" \
+    PREFILL_IPS)
+
+DECODE_ARGS=$(build_instance_endpoints \
+    "decode" \
+    "$DECODE_NODES" \
+    "$DECODE_TP_SIZE" \
+    "$DECODE_DP_SIZE" \
+    "$DECODE_WORLD_SIZE_PER_NODE" \
+    "$DECODE_BASE_PORT" \
+    DECODE_IPS)
+
+case "$MODE" in
+    benchmark)
+        CMD="python3 ./MicroPDProxyServer.py \
         --model $model_path \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \
-        --port 8868 \
+        --port $DEFAULT_PROXY_PORT \
         --repeat_p_request 1 \
         --repeat_d_times 639 \
         --benchmark_mode"
-elif [ "$PROXY_MODE" == 0 ]; then
-    CMD="python3 ./MicroPDProxyServer.py \
+        ;;
+    advanced|basic|benchmark_decode)
+        CMD="python3 ./MicroPDProxyServer.py \
         --model $model_path \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \
-        --port 8868"
-fi
+        --port $DEFAULT_PROXY_PORT"
+        ;;
+    *)
+        error "Unsupported mode: $MODE"
+        ;;
+esac
 
-# Check if XPYD_LOG is defined and non-empty
-if [ -n "$XPYD_LOG" ]; then
+if [[ -n "${XPYD_LOG:-}" ]]; then
     timestamp=$(date +"%Y%m%d_%H%M%S")
     log_file="$XPYD_LOG/ProxyServer_${timestamp}.log"
-
     CMD="$CMD 2>&1 | tee $log_file"
 fi
 
 echo "Running: $CMD"
-eval $CMD
+
+if [[ "${XPYD_DRY_RUN:-0}" == "1" ]]; then
+    exit 0
+fi
+
+eval "$CMD"
