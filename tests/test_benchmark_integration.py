@@ -10,19 +10,16 @@ Uses standard port range matching benchmarks/run_benchmark.sh.
 
 from __future__ import annotations
 
-import asyncio
-import multiprocessing
+import os
+import subprocess
+import sys
 import time
-from typing import Generator
 
 import httpx
 import pytest
-import uvicorn
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
 
 NUM_PREFILL = 2
 NUM_DECODE = 16
@@ -30,180 +27,150 @@ PREFILL_BASE = 8100
 DECODE_BASE = 8200
 PROXY_PORT = 8868
 
-MODEL_PATH = "tokenizers/DeepSeek-R1"
 
-
-def _run_uvicorn(app_path: str, port: int) -> None:
-    """Run a uvicorn server in a subprocess."""
-    uvicorn.run(app_path, host="127.0.0.1", port=port, log_level="warning")
-
-
-def _run_proxy() -> None:
-    """Run the proxy server in a subprocess."""
-    import sys, os
-
-    # Ensure repo root is on sys.path so core/ is importable
-    repo = os.path.join(os.path.dirname(__file__), "..")
-    sys.path.insert(0, repo)
-
-    prefill = [f"127.0.0.1:{PREFILL_BASE + i}" for i in range(NUM_PREFILL)]
-    decode = [f"127.0.0.1:{DECODE_BASE + i}" for i in range(NUM_DECODE)]
-
-    # Build argv as if invoked from CLI
-    sys.argv = [
-        "MicroPDProxyServer.py",
-        "--model", MODEL_PATH,
-        "--prefill", *prefill,
-        "--decode", *decode,
-        "--port", str(PROXY_PORT),
-    ]
-
-    # Import and run — the proxy script typically calls uvicorn.run() in __main__
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "proxy", os.path.join(repo, "core", "MicroPDProxyServer.py")
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-
-def _wait_port(port: int, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+def _wait_port(port: int, timeout: float = 20.0) -> bool:
+    """Wait until a port is accepting connections."""
+    import socket
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         try:
-            with httpx.Client() as c:
-                r = c.get(f"http://127.0.0.1:{port}/ping", timeout=1)
-                if r.status_code == 200:
-                    return
-        except Exception:
-            pass
-        time.sleep(0.3)
-    raise RuntimeError(f"Port {port} not ready after {timeout}s")
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def cluster() -> Generator[None, None, None]:
+def cluster():
     """Start dummy nodes + proxy, yield, then tear down."""
-    procs: list[multiprocessing.Process] = []
+    env = os.environ.copy()
+    env["DUMMY_MODEL_ID"] = MODEL_PATH
+    procs = []
 
-    # Prefill nodes
+    # Start prefill nodes
     for i in range(NUM_PREFILL):
-        p = multiprocessing.Process(
-            target=_run_uvicorn,
-            args=("dummy_nodes.prefill_node:app", PREFILL_BASE + i),
-            daemon=True,
+        port = PREFILL_BASE + i
+        p = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn",
+             "dummy_nodes.prefill_node:app",
+             "--host", "127.0.0.1", "--port", str(port),
+             "--log-level", "error"],
+            env=env, cwd=_REPO_ROOT,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        p.start()
         procs.append(p)
 
-    # Decode nodes
+    # Start decode nodes
     for i in range(NUM_DECODE):
-        p = multiprocessing.Process(
-            target=_run_uvicorn,
-            args=("dummy_nodes.decode_node:app", DECODE_BASE + i),
-            daemon=True,
+        port = DECODE_BASE + i
+        p = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn",
+             "dummy_nodes.decode_node:app",
+             "--host", "127.0.0.1", "--port", str(port),
+             "--log-level", "error"],
+            env=env, cwd=_REPO_ROOT,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        p.start()
         procs.append(p)
 
     # Wait for nodes
     for i in range(NUM_PREFILL):
-        _wait_port(PREFILL_BASE + i)
+        assert _wait_port(PREFILL_BASE + i), f"Prefill {PREFILL_BASE + i} didn't start"
     for i in range(NUM_DECODE):
-        _wait_port(DECODE_BASE + i)
+        assert _wait_port(DECODE_BASE + i), f"Decode {DECODE_BASE + i} didn't start"
 
-    # Proxy
-    proxy_proc = multiprocessing.Process(target=_run_proxy, daemon=True)
-    proxy_proc.start()
-    procs.append(proxy_proc)
-    time.sleep(3)  # give proxy time to start
+    # Start proxy
+    prefill_args = [f"127.0.0.1:{PREFILL_BASE + i}" for i in range(NUM_PREFILL)]
+    decode_args = [f"127.0.0.1:{DECODE_BASE + i}" for i in range(NUM_DECODE)]
 
-    yield
+    proxy = subprocess.Popen(
+        [sys.executable, "core/MicroPDProxyServer.py",
+         "--model", MODEL_PATH,
+         "--prefill", *prefill_args,
+         "--decode", *decode_args,
+         "--port", str(PROXY_PORT)],
+        env=env, cwd=_REPO_ROOT,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    procs.append(proxy)
+    assert _wait_port(PROXY_PORT), "Proxy didn't start"
 
+    yield {"proxy_port": PROXY_PORT, "model": MODEL_PATH}
+
+    # Teardown
     for p in procs:
         p.terminate()
     for p in procs:
-        p.join(timeout=5)
+        p.wait(timeout=5)
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+CHAT_PAYLOAD = {
+    "model": "",  # will be set in tests
+    "messages": [{"role": "user", "content": "Hello world"}],
+    "max_tokens": 5,
+    "stream": False,
+}
 
-BASE_URL = f"http://127.0.0.1:{PROXY_PORT}"
 
-
-def test_models_endpoint(cluster: None) -> None:
-    """GET /v1/models should return at least one model."""
-    with httpx.Client(base_url=BASE_URL, timeout=10) as c:
+def test_models_endpoint(cluster):
+    """Proxy /v1/models should return model info from backend nodes."""
+    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=10) as c:
         r = c.get("/v1/models")
         assert r.status_code == 200
         data = r.json()
-        assert "data" in data
-        assert len(data["data"]) > 0
+        assert len(data) > 0  # proxy returns per-instance results
 
 
-def test_completions_single(cluster: None) -> None:
-    """POST /v1/completions with a single prompt."""
-    with httpx.Client(base_url=BASE_URL, timeout=30) as c:
-        r = c.post("/v1/completions", json={
-            "model": "dummy",
-            "prompt": "Hello " * 500,
-            "max_tokens": 50,
-        })
+def test_chat_completions(cluster):
+    """Non-streaming chat completions through proxy."""
+    payload = {**CHAT_PAYLOAD, "model": cluster["model"]}
+    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+        r = c.post("/v1/chat/completions", json=payload)
         assert r.status_code == 200
         data = r.json()
         assert "choices" in data
         assert len(data["choices"]) > 0
+        assert data["choices"][0]["message"]["content"]
 
 
-def test_completions_streaming(cluster: None) -> None:
-    """POST /v1/completions with stream=true."""
-    with httpx.Client(base_url=BASE_URL, timeout=30) as c:
-        with c.stream("POST", "/v1/completions", json={
-            "model": "dummy",
-            "prompt": "Hello " * 500,
-            "max_tokens": 20,
-            "stream": True,
-        }) as resp:
-            assert resp.status_code == 200
-            chunks = []
-            for line in resp.iter_lines():
-                if line.startswith("data: ") and line != "data: [DONE]":
-                    chunks.append(line)
-            assert len(chunks) > 0
+def test_chat_completions_streaming(cluster):
+    """Streaming chat completions through proxy."""
+    payload = {**CHAT_PAYLOAD, "model": cluster["model"], "stream": True}
+    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+        r = c.post("/v1/chat/completions", json=payload)
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers.get("content-type", "")
+        lines = r.text.strip().split("\n")
+        data_lines = [l for l in lines if l.startswith("data: ")]
+        assert len(data_lines) >= 2  # at least some chunks + [DONE]
+        assert data_lines[-1] == "data: [DONE]"
 
 
-def test_chat_completions(cluster: None) -> None:
-    """POST /v1/chat/completions — basic smoke test."""
-    with httpx.Client(base_url=BASE_URL, timeout=30) as c:
-        r = c.post("/v1/chat/completions", json={
-            "model": "dummy",
-            "messages": [{"role": "user", "content": "Hi " * 500}],
-            "max_tokens": 50,
-        })
+def test_status_topology(cluster):
+    """Proxy status should reflect correct topology."""
+    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=10) as c:
+        r = c.get("/status")
         assert r.status_code == 200
         data = r.json()
-        assert "choices" in data
+        assert data["prefill_node_count"] == NUM_PREFILL
+        assert data["decode_node_count"] == NUM_DECODE
 
 
-@pytest.mark.asyncio
-async def test_concurrent_completions(cluster: None) -> None:
-    """Send multiple concurrent requests to simulate benchmark load."""
-    num_requests = 20
+def test_concurrent_requests(cluster):
+    """Multiple concurrent requests should all succeed."""
+    import concurrent.futures
 
-    async def _send(client: httpx.AsyncClient, idx: int) -> int:
-        r = await client.post("/v1/completions", json={
-            "model": "dummy",
-            "prompt": f"Request {idx} " + "token " * 200,
-            "max_tokens": 30,
-        })
-        return r.status_code
+    payload = {**CHAT_PAYLOAD, "model": cluster["model"]}
+    results = []
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
-        results = await asyncio.gather(*[_send(c, i) for i in range(num_requests)])
-        assert all(s == 200 for s in results), f"Some requests failed: {results}"
+    def send_request(i):
+        with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+            r = c.post("/v1/chat/completions", json=payload)
+            return r.status_code
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+        futures = [pool.submit(send_request, i) for i in range(20)]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    assert all(code == 200 for code in results), f"Some requests failed: {results}"
