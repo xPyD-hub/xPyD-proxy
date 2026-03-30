@@ -217,8 +217,8 @@ def test_vllm_bench_serve(cluster):
     print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout)
     if result.stderr:
         # Filter out vllm startup warnings (Triton, CUDA)
-        important = [l for l in result.stderr.split("\n")
-                     if "error" in l.lower() and "triton" not in l.lower()]
+        important = [line for line in result.stderr.split("\n")
+                     if "error" in line.lower() and "triton" not in line.lower()]
         if important:
             print("STDERR:", "\n".join(important[-5:]))
 
