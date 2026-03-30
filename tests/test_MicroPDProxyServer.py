@@ -228,9 +228,9 @@ def test_round_robin_schedule_with_full_signature():
     instances = ["a:1", "b:2"]
     cycler = itertools.cycle(instances)
 
-    # Call with the exact signature Proxy.schedule() uses
-    r1 = policy.schedule(cycler, is_prompt=True, request_len=100, max_tokens=1)
-    r2 = policy.schedule(cycler, is_prompt=False, request_len=100, max_tokens=50)
+    # Call with positional args — the exact way Proxy.schedule() invokes it
+    r1 = policy.schedule(cycler, True, 100, 1)
+    r2 = policy.schedule(cycler, False, 100, 50)
     assert r1 == "a:1"
     assert r2 == "b:2"
 

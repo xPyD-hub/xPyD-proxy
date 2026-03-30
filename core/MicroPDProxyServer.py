@@ -154,15 +154,15 @@ class SchedulingPolicy(ABC):
     @abstractmethod
     def schedule(self,
                  cycler: itertools.cycle,
-                 is_prompt: int = None,
+                 is_prompt: Optional[bool] = None,
                  request_len: Optional[int] = None,
-                 max_tokens: Optional[int] = None) -> str:
+                 max_tokens: Optional[int] = None) -> Optional[str]:
         raise NotImplementedError("Scheduling Proxy is not set.")
 
     def schedule_completion(self,
-                            prefill_instance: str = None,
-                            decode_instance: str = None,
-                            req_len: int = None):
+                            prefill_instance: Optional[str] = None,
+                            decode_instance: Optional[str] = None,
+                            req_len: Optional[int] = None) -> None:
         """Called when a request finishes. Override to track load."""
         pass
 
@@ -819,9 +819,9 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
 
     def schedule(self,
                  cycler: itertools.cycle,
-                 is_prompt: int = None,
+                 is_prompt: Optional[bool] = None,
                  request_len: Optional[int] = None,
-                 max_tokens: Optional[int] = None) -> str:
+                 max_tokens: Optional[int] = None) -> Optional[str]:
         return self.safe_next(cycler)
 
 
