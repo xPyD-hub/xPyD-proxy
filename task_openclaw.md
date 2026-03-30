@@ -88,13 +88,13 @@ At minimum, verify:
 
 ---
 
----
+--------------------------
 
-## 9. ~~Task two~~ (DONE)
+## 4. ~~Task two~~ (DONE)
 
 Task two has been implemented and validated.
 
-## 10. Task two details
+## 5. Task two details
 
 
 ---
@@ -147,13 +147,13 @@ At minimum, verify:
 - the dummy prefill / decode stack is sufficient to support the benchmark path
 - any missing dummy behavior required by the benchmark flow is fixed if necessary
 
----
+--------------------------
 
-## 9. ~~Task two~~ (DONE)
+## 4. ~~Task two~~ (DONE)
 
 Task two has been implemented and validated.
 
-## 10. Task two details
+## 5. Task two details
 
 ### Goal
 
@@ -321,11 +321,11 @@ The script should fail clearly and handle invalid input gracefully.
 - Print a clear and understandable error message
 - Do not generate partial / ambiguous proxy arguments
 
-## 11. ~~Task one~~ (DONE)
+## 6. ~~Task one~~ (DONE)
 
 The content in `core/` has already been validated on real hardware. The code is considered basically correct.
 
-## 12. Task one details
+## 7. Task one details
 
 The first task was:
 
