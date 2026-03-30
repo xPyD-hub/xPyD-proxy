@@ -217,6 +217,40 @@ def test_round_robin_scheduling():
     assert results == ["a:1", "b:2", "c:3", "a:1", "b:2", "c:3"]
 
 
+def test_round_robin_schedule_with_full_signature():
+    """Verify RoundRobin.schedule() accepts the same args Proxy.schedule() passes.
+
+    Regression test for #7: Proxy.schedule() calls
+    scheduling_policy.schedule(cycler, is_prompt, request_len, max_tokens)
+    but RoundRobinSchedulingPolicy only accepted (cycler, request, max_tokens).
+    """
+    policy = RoundRobinSchedulingPolicy()
+    instances = ["a:1", "b:2"]
+    cycler = itertools.cycle(instances)
+
+    # Call with positional args — the exact way Proxy.schedule() invokes it
+    r1 = policy.schedule(cycler, True, 100, 1)
+    r2 = policy.schedule(cycler, False, 100, 50)
+    assert r1 == "a:1"
+    assert r2 == "b:2"
+
+
+def test_round_robin_schedule_completion_exists():
+    """Verify RoundRobin has schedule_completion() (no-op from base class).
+
+    Regression test for #8: Proxy.schedule_completion() calls
+    scheduling_policy.schedule_completion() which was missing on RoundRobin.
+    """
+    policy = RoundRobinSchedulingPolicy()
+    # Should not raise AttributeError
+    policy.schedule_completion(
+        prefill_instance="a:1", decode_instance=None, req_len=100
+    )
+    policy.schedule_completion(
+        prefill_instance=None, decode_instance="b:2", req_len=50
+    )
+
+
 def test_load_balanced_scheduling():
     prefill = ["p1:1", "p2:2"]
     decode = ["d1:1", "d2:2"]

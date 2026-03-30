@@ -152,8 +152,19 @@ class SchedulingPolicy(ABC):
         self.lock = threading.Lock()
 
     @abstractmethod
-    def schedule(self, cycler: itertools.cycle):
+    def schedule(self,
+                 cycler: itertools.cycle,
+                 is_prompt: Optional[bool] = None,
+                 request_len: Optional[int] = None,
+                 max_tokens: Optional[int] = None) -> Optional[str]:
         raise NotImplementedError("Scheduling Proxy is not set.")
+
+    def schedule_completion(self,
+                            prefill_instance: Optional[str] = None,
+                            decode_instance: Optional[str] = None,
+                            req_len: Optional[int] = None) -> None:
+        """Called when a request finishes. Override to track load."""
+        pass
 
 
 class Proxy:
@@ -808,8 +819,9 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
 
     def schedule(self,
                  cycler: itertools.cycle,
-                 request: Optional[dict[str, any]] = None,
-                 max_tokens:Optional[int] = None) -> str:
+                 is_prompt: Optional[bool] = None,
+                 request_len: Optional[int] = None,
+                 max_tokens: Optional[int] = None) -> Optional[str]:
         return self.safe_next(cycler)
 
 
