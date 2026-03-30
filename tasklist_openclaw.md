@@ -17,7 +17,45 @@ The system uses a shell script `xpyd_start_proxy.sh` to configure and launch a d
 
 ---
 
-## Task 3 (IN PROGRESS)
+## Task 4 (IN PROGRESS)
+
+### Goal
+Refactor the scheduler code in `core/MicroPDProxyServer.py` into a clean module structure under `core/scheduler/`.
+
+### Scope
+- **Only modify `core/`**
+- Extract scheduler-related classes from `MicroPDProxyServer.py` into separate files
+
+### New directory structure
+```
+core/scheduler/
+├── __init__.py
+├── scheduler_base.py       # SchedulingPolicy base class
+├── round_robin.py           # RoundRobinSchedulingPolicy
+└── load_balanced.py         # LoadBalancedScheduler
+```
+
+### Requirements
+1. **`scheduler_base.py`** — define `SchedulingPolicy` as the abstract base class
+2. **`round_robin.py`** — move `RoundRobinSchedulingPolicy` here, inheriting from base
+3. **`load_balanced.py`** — move `LoadBalancedScheduler` here, inheriting from base
+4. **`MicroPDProxyServer.py`** — import from the new module instead of defining inline
+5. **Unit tests** — add tests for both schedulers under `tests/`
+6. **CI** — ensure the new tests run in CI
+
+### Constraints
+- The refactor must not change any observable behavior
+- All existing tests must continue to pass
+- `MicroPDProxyServer.py` should import from `core.scheduler` after refactoring
+
+### Testing / verification
+- New UT covering both `RoundRobinSchedulingPolicy` and `LoadBalancedScheduler`
+- All existing integration / benchmark tests still pass
+- CI green
+
+---
+
+## Task 3 (DONE)
 
 ### Goal
 Support a real benchmark-style validation flow using `vllm bench serve` semantics in a local dummy-based setup.
