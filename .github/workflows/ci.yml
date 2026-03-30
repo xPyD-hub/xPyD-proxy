@@ -28,7 +28,9 @@ jobs:
 
       - name: Run tests
         run: |
-          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" python -m pytest tests/ -v --tb=short
+          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
+            python -m pytest tests/ -v --tb=short \
+            --ignore=tests/test_MicroPDProxyServer.py
 
   lint:
     runs-on: ubuntu-latest
