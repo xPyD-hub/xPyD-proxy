@@ -48,7 +48,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install vllm
+          VLLM_TARGET_DEVICE=cpu pip install vllm
 
       - name: Run benchmark integration tests
         run: |
