@@ -61,7 +61,7 @@ async def test_streaming(client: AsyncClient):
     assert "text/event-stream" in resp.headers["content-type"]
 
     lines = resp.text.strip().split("\n")
-    data_lines = [l for l in lines if l.startswith("data: ")]
+    data_lines = [line for line in lines if line.startswith("data: ")]
 
     # 1 role + 5 content + 1 finish + 1 [DONE] = 8
     assert len(data_lines) == 8
@@ -93,7 +93,9 @@ async def test_streaming_token_count(client: AsyncClient):
     resp = await client.post("/v1/chat/completions", json=payload)
 
     lines = resp.text.strip().split("\n")
-    data_lines = [l for l in lines if l.startswith("data: ") and l != "data: [DONE]"]
+    data_lines = [
+        line for line in lines if line.startswith("data: ") and line != "data: [DONE]"
+    ]
 
     # Count content chunks (exclude role-only and finish-only chunks)
     content_chunks = 0

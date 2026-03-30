@@ -134,7 +134,7 @@ async def D_first_token_generator(generator_p,
                 decode_instance=None,
                 req_len=req_len
             )
-    
+
     try:
         async for chunk in generator_d:
             yield chunk
@@ -549,7 +549,7 @@ class Proxy:
         elif isinstance(prompt, list):
             if all(isinstance(p, str) for p in prompt):
                 return sum(len(self.tokenizer(p)["input_ids"]) for p in prompt)
-            elif (all(isinstance(p, list) and 
+            elif (all(isinstance(p, list) and
                 all(isinstance(x, int) for x in p) for p in prompt)):
                 # Already tokenized
                 return sum(len(p) for p in prompt)
