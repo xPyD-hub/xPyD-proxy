@@ -87,6 +87,10 @@ echo "  request-rate: $REQUEST_RATE"
 vllm bench serve \
     --host 127.0.0.1 --port 8868 \
     --model "$MODEL" \
+    # Use gpt2 tokenizer: lightweight and standard. The local DeepSeek-R1
+    # tokenizer uses a custom class (TokenizersBackend) that vllm cannot
+    # load directly. For random-data benchmarks, tokenizer choice does
+    # not affect results.
     --tokenizer gpt2 \
     --dataset-name random \
     --random-input-len 3000 --random-output-len 200 \

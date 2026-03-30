@@ -1,11 +1,9 @@
-"""Integration test that mimics vllm bench serve against proxy + dummy nodes.
+"""Integration test: proxy + dummy nodes end-to-end.
 
 Topology (matches benchmarks/run_benchmark.sh):
   - 2 prefill nodes  (ports 8100-8101)
   - 16 decode nodes  (ports 8200-8215)
   - 1 proxy          (port 8868)
-
-Uses standard port range matching benchmarks/run_benchmark.sh.
 """
 
 from __future__ import annotations
@@ -74,7 +72,7 @@ def cluster():
         )
         procs.append(p)
 
-    # Wait for nodes
+    # Wait for all nodes
     for i in range(NUM_PREFILL):
         assert _wait_port(PREFILL_BASE + i), f"Prefill {PREFILL_BASE + i} didn't start"
     for i in range(NUM_DECODE):
@@ -94,7 +92,7 @@ def cluster():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     procs.append(proxy)
-    assert _wait_port(PROXY_PORT), "Proxy didn't start"
+    assert _wait_port(PROXY_PORT, timeout=30), "Proxy didn't start"
 
     yield {"proxy_port": PROXY_PORT, "model": MODEL_PATH}
 
@@ -106,7 +104,7 @@ def cluster():
 
 
 CHAT_PAYLOAD = {
-    "model": "",  # will be set in tests
+    "model": "",
     "messages": [{"role": "user", "content": "Hello world"}],
     "max_tokens": 5,
     "stream": False,
@@ -119,7 +117,7 @@ def test_models_endpoint(cluster):
         r = c.get("/v1/models")
         assert r.status_code == 200
         data = r.json()
-        assert len(data) > 0  # proxy returns per-instance results
+        assert len(data) > 0
 
 
 def test_chat_completions(cluster):
@@ -143,7 +141,7 @@ def test_chat_completions_streaming(cluster):
         assert "text/event-stream" in r.headers.get("content-type", "")
         lines = r.text.strip().split("\n")
         data_lines = [l for l in lines if l.startswith("data: ")]
-        assert len(data_lines) >= 2  # at least some chunks + [DONE]
+        assert len(data_lines) >= 2
         assert data_lines[-1] == "data: [DONE]"
 
 
@@ -179,20 +177,31 @@ def test_concurrent_requests(cluster):
 def test_vllm_bench_serve(cluster):
     """Run vllm bench serve with 1000 prompts through the proxy.
 
-    This is the full end-to-end benchmark validation required by task 3.
-    Topology: 2 prefill (TP8 DP2) + 16 decode (TP1 DP16) + 1 proxy.
+    This test requires vllm to be installed. It is excluded from CI
+    (--ignore in workflow) because vllm is heavy. Run manually:
+
+        PYTHONPATH=core:dummy_nodes pytest tests/test_benchmark_integration.py::test_vllm_bench_serve -v
+
+    Note: Uses --tokenizer gpt2 because the local DeepSeek-R1 tokenizer
+    uses a custom tokenizer class that vllm cannot load directly.
+    gpt2 is a lightweight standard tokenizer sufficient for benchmarking
+    with random-generated prompts.
     """
-    import subprocess as sp
+    import shutil
 
-    env = os.environ.copy()
-    env["PATH"] = "/home/tony/.openclaw/workspace/vllm/.venv/bin:" + env.get("PATH", "")
+    vllm_bin = shutil.which("vllm")
+    if vllm_bin is None:
+        pytest.skip("vllm not installed — skipping benchmark test")
 
-    result = sp.run(
+    result = subprocess.run(
         [
-            "vllm", "bench", "serve",
+            vllm_bin, "bench", "serve",
             "--host", "127.0.0.1",
             "--port", str(cluster["proxy_port"]),
             "--model", cluster["model"],
+            # Use gpt2 tokenizer: lightweight, standard, avoids loading
+            # DeepSeek-R1's custom TokenizersBackend class that vllm
+            # cannot handle. For random-data benchmarks this is fine.
             "--tokenizer", "gpt2",
             "--dataset-name", "random",
             "--random-input-len", "3000",
@@ -202,21 +211,29 @@ def test_vllm_bench_serve(cluster):
             "--request-rate", "3.6",
             "--endpoint", "/v1/completions",
         ],
-        capture_output=True, text=True, timeout=600, env=env,
+        capture_output=True, text=True, timeout=600,
     )
 
     print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout)
     if result.stderr:
-        print("STDERR:", result.stderr[-500:])
+        # Filter out vllm startup warnings (Triton, CUDA)
+        important = [l for l in result.stderr.split("\n")
+                     if "error" in l.lower() and "triton" not in l.lower()]
+        if important:
+            print("STDERR:", "\n".join(important[-5:]))
 
     assert result.returncode == 0, f"vllm bench serve failed: {result.stderr[-500:]}"
 
-    # Parse results
-    lines = result.stdout.strip().split("\n")
-    for line in lines:
+    # Parse results with fallback assertion
+    successful = None
+    failed = None
+    for line in result.stdout.strip().split("\n"):
         if "Successful requests:" in line:
             successful = int(line.split(":")[1].strip())
-            assert successful == 1000, f"Expected 1000 successful, got {successful}"
         if "Failed requests:" in line:
             failed = int(line.split(":")[1].strip())
-            assert failed == 0, f"Expected 0 failed, got {failed}"
+
+    assert successful is not None, "Could not parse 'Successful requests' from output"
+    assert failed is not None, "Could not parse 'Failed requests' from output"
+    assert successful == 1000, f"Expected 1000 successful, got {successful}"
+    assert failed == 0, f"Expected 0 failed, got {failed}"
