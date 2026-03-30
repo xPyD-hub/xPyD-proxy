@@ -38,28 +38,28 @@ Continue with task two described below. This is the current active implementatio
 
 ---
 
-## 3. Task one (DONE)
+## 3. ~~Task one~~ (DONE)
 
-The content in `core/` has already been validated on real hardware. The code is considered basically correct.
-
-So the first task was:
-
-- without modifying core business logic,
-- debug `dummy_nodes`,
-- and make `dummy_nodes` work correctly under the following proxy server configurations:
-
-### Required configurations
-
-- `bash xpyd_start_proxy.sh 1 2 1`
-- `bash xpyd_start_proxy.sh 2 2 1`
-- `bash xpyd_start_proxy.sh 1 2 2`
-- `bash xpyd_start_proxy.sh 1 2 4`
-- `bash xpyd_start_proxy.sh 1 2 8`
-- `bash xpyd_start_proxy.sh 2 2 2`
-- `bash xpyd_start_proxy.sh 2 4 1`
-- `bash xpyd_start_proxy.sh 2 4 2`
-
-After debugging, submit PRs.
+> The content in `core/` has already been validated on real hardware. The code is considered basically correct.
+>
+> So the first task was:
+>
+> - without modifying core business logic,
+> - debug `dummy_nodes`,
+> - and make `dummy_nodes` work correctly under the following proxy server configurations:
+>
+> ### Required configurations
+>
+> - `bash xpyd_start_proxy.sh 1 2 1`
+> - `bash xpyd_start_proxy.sh 2 2 1`
+> - `bash xpyd_start_proxy.sh 1 2 2`
+> - `bash xpyd_start_proxy.sh 1 2 4`
+> - `bash xpyd_start_proxy.sh 1 2 8`
+> - `bash xpyd_start_proxy.sh 2 2 2`
+> - `bash xpyd_start_proxy.sh 2 4 1`
+> - `bash xpyd_start_proxy.sh 2 4 2`
+>
+> After debugging, submit PRs.
 
 ---
 
