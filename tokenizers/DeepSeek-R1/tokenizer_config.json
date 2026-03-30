@@ -1,0 +1,13 @@
+{
+  "backend": "tokenizers",
+  "bos_token": "<｜begin▁of▁sentence｜>",
+  "clean_up_tokenization_spaces": false,
+  "eos_token": "<｜end▁of▁sentence｜>",
+  "is_local": false,
+  "legacy": true,
+  "model_max_length": 16384,
+  "pad_token": "<｜end▁of▁sentence｜>",
+  "sp_model_kwargs": {},
+  "tokenizer_class": "TokenizersBackend",
+  "unk_token": null
+}
