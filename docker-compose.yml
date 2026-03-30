@@ -1,0 +1,52 @@
+# Docker Compose: full local topology with dummy prefill/decode nodes + proxy
+#
+# Usage:
+#   docker compose up --build
+#   curl http://localhost:8868/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{"model":"dummy","messages":[{"role":"user","content":"Hi"}],"max_tokens":10}'
+
+services:
+  prefill-0:
+    build: .
+    command: >
+      uvicorn dummy_nodes.prefill_node:app --host 0.0.0.0 --port 8100
+    expose:
+      - "8100"
+
+  prefill-1:
+    build: .
+    command: >
+      uvicorn dummy_nodes.prefill_node:app --host 0.0.0.0 --port 8100
+    expose:
+      - "8100"
+
+  decode-0:
+    build: .
+    command: >
+      uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
+    expose:
+      - "8200"
+
+  decode-1:
+    build: .
+    command: >
+      uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
+    expose:
+      - "8200"
+
+  proxy:
+    build: .
+    command: >
+      python3 core/MicroPDProxyServer.py
+      --model tokenizers/DeepSeek-R1
+      --prefill prefill-0:8100 prefill-1:8100
+      --decode  decode-0:8200  decode-1:8200
+      --port 8868
+    ports:
+      - "8868:8868"
+    depends_on:
+      - prefill-0
+      - prefill-1
+      - decode-0
+      - decode-1
