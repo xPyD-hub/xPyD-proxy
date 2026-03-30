@@ -17,6 +17,34 @@ The system uses a shell script `xpyd_start_proxy.sh` to configure and launch a d
 
 ---
 
+## Task 5 (IN PROGRESS)
+
+### Goal
+Add observability to the proxy via a Prometheus-compatible metrics endpoint.
+
+### Add `/metrics` endpoint (Prometheus format)
+
+`vllm bench serve` requests `/metrics` (Prometheus-style), which currently returns 404.
+
+**Requirements:**
+- Add a `/metrics` endpoint to the proxy
+- Expose basic metrics in Prometheus text format:
+  - `proxy_requests_total` (counter, by endpoint)
+  - `proxy_request_duration_seconds` (histogram, by endpoint)
+  - `proxy_active_requests` (gauge)
+- Use `prometheus_client` library (already in requirements via vllm dependency)
+
+### Constraints
+- Do not modify core proxy business logic beyond adding the new endpoint
+- All existing tests must continue to pass
+- Add UT for the new endpoint
+
+### Testing / verification
+- `/metrics` endpoint returns valid Prometheus text format
+- CI green
+
+---
+
 ## Task 4 (IN PROGRESS)
 
 ### Goal
