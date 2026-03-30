@@ -1,14 +1,18 @@
 """Integration test: proxy + dummy nodes end-to-end.
 
 Topology (matches benchmarks/run_benchmark.sh):
-  - 2 prefill nodes  (ports 8100-8101)
-  - 16 decode nodes  (ports 8200-8215)
-  - 1 proxy          (port 8868)
+  - 2 prefill nodes  (dynamically allocated ports)
+  - 16 decode nodes  (dynamically allocated ports)
+  - 1 proxy          (dynamically allocated port)
+
+This test file is excluded from CI via --ignore in the workflow.
+Run manually: PYTHONPATH=core:dummy_nodes pytest tests/test_benchmark_integration.py -v
 """
 
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -21,14 +25,18 @@ MODEL_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
 
 NUM_PREFILL = 2
 NUM_DECODE = 16
-PREFILL_BASE = 8100
-DECODE_BASE = 8200
-PROXY_PORT = 8868
+
+
+def _free_port():
+    """Allocate an ephemeral port."""
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _wait_port(port: int, timeout: float = 20.0) -> bool:
     """Wait until a port is accepting connections."""
-    import socket
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -46,61 +54,74 @@ def cluster():
     env["DUMMY_MODEL_ID"] = MODEL_PATH
     procs = []
 
-    # Start prefill nodes
-    for i in range(NUM_PREFILL):
-        port = PREFILL_BASE + i
-        p = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn",
-             "dummy_nodes.prefill_node:app",
-             "--host", "127.0.0.1", "--port", str(port),
-             "--log-level", "error"],
+    prefill_ports = [_free_port() for _ in range(NUM_PREFILL)]
+    decode_ports = [_free_port() for _ in range(NUM_DECODE)]
+    proxy_port = _free_port()
+
+    try:
+        # Start prefill nodes
+        for port in prefill_ports:
+            p = subprocess.Popen(
+                [sys.executable, "-m", "uvicorn",
+                 "dummy_nodes.prefill_node:app",
+                 "--host", "127.0.0.1", "--port", str(port),
+                 "--log-level", "error"],
+                env=env, cwd=_REPO_ROOT,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            procs.append(p)
+
+        # Start decode nodes
+        for port in decode_ports:
+            p = subprocess.Popen(
+                [sys.executable, "-m", "uvicorn",
+                 "dummy_nodes.decode_node:app",
+                 "--host", "127.0.0.1", "--port", str(port),
+                 "--log-level", "error"],
+                env=env, cwd=_REPO_ROOT,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            procs.append(p)
+
+        # Wait for all nodes
+        for port in prefill_ports:
+            assert _wait_port(port), f"Prefill {port} didn't start"
+        for port in decode_ports:
+            assert _wait_port(port), f"Decode {port} didn't start"
+
+        # Start proxy
+        prefill_args = [f"127.0.0.1:{p}" for p in prefill_ports]
+        decode_args = [f"127.0.0.1:{p}" for p in decode_ports]
+
+        proxy = subprocess.Popen(
+            [sys.executable, "core/MicroPDProxyServer.py",
+             "--model", MODEL_PATH,
+             "--prefill", *prefill_args,
+             "--decode", *decode_args,
+             "--port", str(proxy_port)],
             env=env, cwd=_REPO_ROOT,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        procs.append(p)
+        procs.append(proxy)
+        assert _wait_port(proxy_port, timeout=30), "Proxy didn't start"
 
-    # Start decode nodes
-    for i in range(NUM_DECODE):
-        port = DECODE_BASE + i
-        p = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn",
-             "dummy_nodes.decode_node:app",
-             "--host", "127.0.0.1", "--port", str(port),
-             "--log-level", "error"],
-            env=env, cwd=_REPO_ROOT,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        procs.append(p)
+        yield {
+            "proxy_port": proxy_port,
+            "model": MODEL_PATH,
+            "prefill_ports": prefill_ports,
+            "decode_ports": decode_ports,
+        }
 
-    # Wait for all nodes
-    for i in range(NUM_PREFILL):
-        assert _wait_port(PREFILL_BASE + i), f"Prefill {PREFILL_BASE + i} didn't start"
-    for i in range(NUM_DECODE):
-        assert _wait_port(DECODE_BASE + i), f"Decode {DECODE_BASE + i} didn't start"
-
-    # Start proxy
-    prefill_args = [f"127.0.0.1:{PREFILL_BASE + i}" for i in range(NUM_PREFILL)]
-    decode_args = [f"127.0.0.1:{DECODE_BASE + i}" for i in range(NUM_DECODE)]
-
-    proxy = subprocess.Popen(
-        [sys.executable, "core/MicroPDProxyServer.py",
-         "--model", MODEL_PATH,
-         "--prefill", *prefill_args,
-         "--decode", *decode_args,
-         "--port", str(PROXY_PORT)],
-        env=env, cwd=_REPO_ROOT,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    procs.append(proxy)
-    assert _wait_port(PROXY_PORT, timeout=30), "Proxy didn't start"
-
-    yield {"proxy_port": PROXY_PORT, "model": MODEL_PATH}
-
-    # Teardown
-    for p in procs:
-        p.terminate()
-    for p in procs:
-        p.wait(timeout=5)
+    finally:
+        # Teardown — always clean up, even if setup fails
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
 
 
 CHAT_PAYLOAD = {
@@ -113,11 +134,14 @@ CHAT_PAYLOAD = {
 
 def test_models_endpoint(cluster):
     """Proxy /v1/models returns per-instance aggregated response."""
-    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=10) as c:
+    with httpx.Client(
+        base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
+        timeout=10, trust_env=False,
+    ) as c:
         r = c.get("/v1/models")
         assert r.status_code == 200
         data = r.json()
-        # Proxy returns per-instance aggregated response, not standard OpenAI format
+        # Proxy returns per-instance aggregated response
         assert len(data) > 0, "No instances in /v1/models response"
         for instance, result in data.items():
             assert result["status"] == 200
@@ -128,7 +152,10 @@ def test_models_endpoint(cluster):
 def test_chat_completions(cluster):
     """Non-streaming chat completions through proxy."""
     payload = {**CHAT_PAYLOAD, "model": cluster["model"]}
-    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+    with httpx.Client(
+        base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
+        timeout=30, trust_env=False,
+    ) as c:
         r = c.post("/v1/chat/completions", json=payload)
         assert r.status_code == 200
         data = r.json()
@@ -140,7 +167,10 @@ def test_chat_completions(cluster):
 def test_chat_completions_streaming(cluster):
     """Streaming chat completions through proxy."""
     payload = {**CHAT_PAYLOAD, "model": cluster["model"], "stream": True}
-    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+    with httpx.Client(
+        base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
+        timeout=30, trust_env=False,
+    ) as c:
         r = c.post("/v1/chat/completions", json=payload)
         assert r.status_code == 200
         assert "text/event-stream" in r.headers.get("content-type", "")
@@ -152,7 +182,10 @@ def test_chat_completions_streaming(cluster):
 
 def test_status_topology(cluster):
     """Proxy status should reflect correct topology."""
-    with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=10) as c:
+    with httpx.Client(
+        base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
+        timeout=10, trust_env=False,
+    ) as c:
         r = c.get("/status")
         assert r.status_code == 200
         data = r.json()
@@ -165,10 +198,12 @@ def test_concurrent_requests(cluster):
     import concurrent.futures
 
     payload = {**CHAT_PAYLOAD, "model": cluster["model"]}
-    results = []
 
-    def send_request(i):
-        with httpx.Client(base_url=f"http://127.0.0.1:{cluster['proxy_port']}", timeout=30) as c:
+    def send_request(idx):
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
+            timeout=30, trust_env=False,
+        ) as c:
             r = c.post("/v1/chat/completions", json=payload)
             return r.status_code
 
@@ -179,24 +214,29 @@ def test_concurrent_requests(cluster):
     assert all(code == 200 for code in results), f"Some requests failed: {results}"
 
 
+@pytest.mark.skipif(
+    os.environ.get("RUN_VLLM_BENCH") != "1",
+    reason="Set RUN_VLLM_BENCH=1 to run this heavy benchmark test",
+)
 def test_vllm_bench_serve(cluster):
     """Run vllm bench serve with 1000 prompts through the proxy.
 
-    This test requires vllm to be installed. It is excluded from CI
-    (--ignore in workflow) because vllm is heavy. Run manually:
+    This test is heavy (~5-10 min) and requires vllm. It is gated behind
+    the RUN_VLLM_BENCH=1 env var and skipped by default.
 
-        PYTHONPATH=core:dummy_nodes pytest tests/test_benchmark_integration.py::test_vllm_bench_serve -v
+    Run manually:
+        RUN_VLLM_BENCH=1 PYTHONPATH=core:dummy_nodes \\
+          pytest tests/test_benchmark_integration.py::test_vllm_bench_serve -v
 
     Note: Uses --tokenizer gpt2 because the local DeepSeek-R1 tokenizer
-    uses a custom tokenizer class that vllm cannot load directly.
-    gpt2 is a lightweight standard tokenizer sufficient for benchmarking
-    with random-generated prompts.
+    uses a custom class (TokenizersBackend) that vllm cannot load.
+    gpt2 is lightweight and sufficient for random-data benchmarks.
     """
     import shutil
 
     vllm_bin = shutil.which("vllm")
     if vllm_bin is None:
-        pytest.skip("vllm not installed — skipping benchmark test")
+        pytest.skip("vllm not installed")
 
     result = subprocess.run(
         [
@@ -204,9 +244,6 @@ def test_vllm_bench_serve(cluster):
             "--host", "127.0.0.1",
             "--port", str(cluster["proxy_port"]),
             "--model", cluster["model"],
-            # Use gpt2 tokenizer: lightweight, standard, avoids loading
-            # DeepSeek-R1's custom TokenizersBackend class that vllm
-            # cannot handle. For random-data benchmarks this is fine.
             "--tokenizer", "gpt2",
             "--dataset-name", "random",
             "--random-input-len", "3000",
@@ -221,7 +258,6 @@ def test_vllm_bench_serve(cluster):
 
     print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout)
     if result.stderr:
-        # Filter out vllm startup warnings (Triton, CUDA)
         important = [line for line in result.stderr.split("\n")
                      if "error" in line.lower() and "triton" not in line.lower()]
         if important:
@@ -229,7 +265,6 @@ def test_vllm_bench_serve(cluster):
 
     assert result.returncode == 0, f"vllm bench serve failed: {result.stderr[-500:]}"
 
-    # Parse results with fallback assertion
     successful = None
     failed = None
     for line in result.stdout.strip().split("\n"):
