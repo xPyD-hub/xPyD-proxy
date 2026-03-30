@@ -3,7 +3,6 @@
 import pytest
 from httpx import AsyncClient
 
-
 COMPLETION_PAYLOAD = {
     "model": "dummy",
     "prompt": "Once upon a time",

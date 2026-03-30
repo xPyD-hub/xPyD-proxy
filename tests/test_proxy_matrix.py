@@ -43,10 +43,19 @@ MATRIX = [
 ]
 
 
+_used_ports: set[int] = set()
+
+
 def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    """Find a free TCP port, avoiding previously allocated ports."""
+    for _ in range(100):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        if port not in _used_ports:
+            _used_ports.add(port)
+            return port
+    raise RuntimeError("Unable to find a unique free port")
 
 
 def _wait_http_ok(url: str, timeout: float = 40.0) -> None:
