@@ -36,8 +36,12 @@ def _run_server(app, port):
     uvicorn.Server(config).run()
 
 
-threading.Thread(target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True).start()
-threading.Thread(target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True).start()
+threading.Thread(
+    target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True
+).start()
+threading.Thread(
+    target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True
+).start()
 time.sleep(2)
 
 
@@ -90,7 +94,9 @@ async def test_streaming_chunk_structure(client: AsyncClient):
     assert "text/event-stream" in resp.headers["content-type"]
 
     lines = resp.text.strip().split("\n")
-    data_lines = [line for line in lines if line.startswith("data: ") and line != "data: [DONE]"]
+    data_lines = [
+        line for line in lines if line.startswith("data: ") and line != "data: [DONE]"
+    ]
     assert len(data_lines) >= 1, "Expected at least one data chunk before [DONE]"
 
     chunk_ids = set()
@@ -125,10 +131,7 @@ async def test_streaming_max_tokens_one(client: AsyncClient):
     data_lines = [line for line in lines if line.startswith("data: ")]
     assert data_lines[-1] == "data: [DONE]"
 
-    content_chunks = [
-        line for line in data_lines
-        if line != "data: [DONE]"
-    ]
+    content_chunks = [line for line in data_lines if line != "data: [DONE]"]
     # With max_tokens=1, expect exactly 1 content chunk
     assert len(content_chunks) >= 1
 

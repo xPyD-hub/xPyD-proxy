@@ -37,8 +37,12 @@ def _run_server(app, port):
     uvicorn.Server(config).run()
 
 
-threading.Thread(target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True).start()
-threading.Thread(target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True).start()
+threading.Thread(
+    target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True
+).start()
+threading.Thread(
+    target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True
+).start()
 time.sleep(2)
 
 
@@ -113,7 +117,9 @@ async def test_concurrent_streaming(client: AsyncClient):
     concurrency = 10
     payload = {**CHAT_PAYLOAD, "stream": True}
 
-    tasks = [client.post("/v1/chat/completions", json=payload) for _ in range(concurrency)]
+    tasks = [
+        client.post("/v1/chat/completions", json=payload) for _ in range(concurrency)
+    ]
     responses = await asyncio.gather(*tasks)
 
     for resp in responses:
@@ -131,14 +137,21 @@ async def test_mixed_concurrent_streaming_and_non_streaming(client: AsyncClient)
     non_stream_tasks = [
         client.post(
             "/v1/chat/completions",
-            json={**CHAT_PAYLOAD, "messages": [{"role": "user", "content": f"ns-{idx}"}]},
+            json={
+                **CHAT_PAYLOAD,
+                "messages": [{"role": "user", "content": f"ns-{idx}"}],
+            },
         )
         for idx in range(8)
     ]
     stream_tasks = [
         client.post(
             "/v1/chat/completions",
-            json={**CHAT_PAYLOAD, "stream": True, "messages": [{"role": "user", "content": f"s-{idx}"}]},
+            json={
+                **CHAT_PAYLOAD,
+                "stream": True,
+                "messages": [{"role": "user", "content": f"s-{idx}"}],
+            },
         )
         for idx in range(8)
     ]
