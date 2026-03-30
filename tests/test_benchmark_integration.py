@@ -174,3 +174,49 @@ def test_concurrent_requests(cluster):
         results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     assert all(code == 200 for code in results), f"Some requests failed: {results}"
+
+
+def test_vllm_bench_serve(cluster):
+    """Run vllm bench serve with 1000 prompts through the proxy.
+
+    This is the full end-to-end benchmark validation required by task 3.
+    Topology: 2 prefill (TP8 DP2) + 16 decode (TP1 DP16) + 1 proxy.
+    """
+    import subprocess as sp
+
+    env = os.environ.copy()
+    env["PATH"] = "/home/tony/.openclaw/workspace/vllm/.venv/bin:" + env.get("PATH", "")
+
+    result = sp.run(
+        [
+            "vllm", "bench", "serve",
+            "--host", "127.0.0.1",
+            "--port", str(cluster["proxy_port"]),
+            "--model", cluster["model"],
+            "--tokenizer", "gpt2",
+            "--dataset-name", "random",
+            "--random-input-len", "3000",
+            "--random-output-len", "200",
+            "--num-prompts", "1000",
+            "--burstiness", "100",
+            "--request-rate", "3.6",
+            "--endpoint", "/v1/completions",
+        ],
+        capture_output=True, text=True, timeout=600, env=env,
+    )
+
+    print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr[-500:])
+
+    assert result.returncode == 0, f"vllm bench serve failed: {result.stderr[-500:]}"
+
+    # Parse results
+    lines = result.stdout.strip().split("\n")
+    for line in lines:
+        if "Successful requests:" in line:
+            successful = int(line.split(":")[1].strip())
+            assert successful == 1000, f"Expected 1000 successful, got {successful}"
+        if "Failed requests:" in line:
+            failed = int(line.split(":")[1].strip())
+            assert failed == 0, f"Expected 0 failed, got {failed}"
