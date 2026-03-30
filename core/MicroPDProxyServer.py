@@ -238,6 +238,9 @@ class Proxy:
         self.router.post("/instances/add",
                          dependencies=[Depends(self.api_key_authenticate)
                                        ])(self.add_instance_endpoint)
+        self.router.post("/instances/remove",
+                         dependencies=[Depends(self.api_key_authenticate)
+                                       ])(self.remove_instance_endpoint)
         self.router.get("/health", response_class=PlainTextResponse)(self.get_health)
         self.router.get("/ping", response_class=PlainTextResponse)(self.get_ping)
         self.router.post("/ping", response_class=PlainTextResponse)(self.get_ping)
@@ -383,13 +386,15 @@ class Proxy:
                 "Unsupported Media Type: Only 'application/json' is allowed",
             )
 
-    def api_key_authenticate(self, x_api_key: str = Header(...)):
+    def api_key_authenticate(self, x_api_key: str = Header(None)):
         expected_api_key = os.environ.get("ADMIN_API_KEY")
         if not expected_api_key:
-            logger.error("ADMIN_API_KEY is not set in the environment.")
+            # No ADMIN_API_KEY configured — skip authentication (dev mode)
+            return
+        if not x_api_key:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Server configuration error.",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing x-api-key header.",
             )
         if x_api_key != expected_api_key:
             logger.warning("Unauthorized access attempt with API Key: %s",
@@ -804,8 +809,49 @@ class Proxy:
             return StreamingResponse(content=iter(error_messages),
                                      media_type="application/json")
 
-    def remove_instance_endpoint(self, instance_type, instance):
-        return
+    async def remove_instance_endpoint(self, request: Request):
+        try:
+            data = await request.json()
+            instance_type = data.get("type")
+            instance = data.get("instance")
+            if instance_type not in ["prefill", "decode"]:
+                raise HTTPException(status_code=400,
+                                    detail="Invalid instance type.")
+            if not instance or ":" not in instance:
+                raise HTTPException(status_code=400,
+                                    detail="Invalid instance format.")
+
+            if instance_type == "prefill":
+                with self.scheduling_policy.lock:
+                    if instance in self.prefill_instances:
+                        self.prefill_instances.remove(instance)
+                        self.prefill_cycler = itertools.cycle(
+                            self.prefill_instances)
+                        return JSONResponse(
+                            {"status": "ok",
+                             "message": f"Removed prefill instance {instance}",
+                             "prefill_count": len(self.prefill_instances)})
+                    else:
+                        raise HTTPException(status_code=404,
+                                            detail="Instance not found.")
+            else:
+                with self.scheduling_policy.lock:
+                    if instance in self.decode_instances:
+                        self.decode_instances.remove(instance)
+                        self.decode_cycler = itertools.cycle(
+                            self.decode_instances)
+                        return JSONResponse(
+                            {"status": "ok",
+                             "message": f"Removed decode instance {instance}",
+                             "decode_count": len(self.decode_instances)})
+                    else:
+                        raise HTTPException(status_code=404,
+                                            detail="Instance not found.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500,
+                                detail=str(e)) from e
 
 class RoundRobinSchedulingPolicy(SchedulingPolicy):
 
