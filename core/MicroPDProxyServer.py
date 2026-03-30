@@ -18,9 +18,7 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
-from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
 import aiohttp
@@ -33,6 +31,11 @@ from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
 from transformers import AutoTokenizer
 from asyncio import CancelledError
 from fastapi.middleware.cors import CORSMiddleware
+from scheduler import (
+    LoadBalancedScheduler,
+    RoundRobinSchedulingPolicy,
+    SchedulingPolicy,
+)
 
 formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
                               "%Y-%m-%d %H:%M:%S")
@@ -145,27 +148,6 @@ async def D_first_token_generator(generator_p,
                 decode_instance=decode_instance,
                 req_len=req_len
             )
-
-class SchedulingPolicy(ABC):
-
-    def __init__(self):
-        self.lock = threading.Lock()
-
-    @abstractmethod
-    def schedule(self,
-                 cycler: itertools.cycle,
-                 is_prompt: Optional[bool] = None,
-                 request_len: Optional[int] = None,
-                 max_tokens: Optional[int] = None) -> Optional[str]:
-        raise NotImplementedError("Scheduling Proxy is not set.")
-
-    def schedule_completion(self,
-                            prefill_instance: Optional[str] = None,
-                            decode_instance: Optional[str] = None,
-                            req_len: Optional[int] = None) -> None:
-        """Called when a request finishes. Override to track load."""
-        pass
-
 
 class Proxy:
 
@@ -807,187 +789,6 @@ class Proxy:
     def remove_instance_endpoint(self, instance_type, instance):
         return
 
-class RoundRobinSchedulingPolicy(SchedulingPolicy):
-
-    def __init__(self):
-        print("RoundRobinSchedulingPolicy")
-        super().__init__()
-
-    def safe_next(self, cycler: itertools.cycle):
-        with self.lock:
-            return next(cycler)
-
-    def schedule(self,
-                 cycler: itertools.cycle,
-                 is_prompt: Optional[bool] = None,
-                 request_len: Optional[int] = None,
-                 max_tokens: Optional[int] = None) -> Optional[str]:
-        return self.safe_next(cycler)
-
-
-class LoadBalancedScheduler(SchedulingPolicy):
-
-    def __init__(self, prefill_instances: list[str],
-                 decode_instances: list[str]):
-        self.prefill_utils_counter = [0] * len(prefill_instances)
-        self.prefill_bs_counter = [0] * len(prefill_instances)
-        self.decode_kv_utils_counter = [0] * len(
-            decode_instances)  #KV cache utils
-        self.decode_bs_counter = [0] * len(decode_instances)
-
-        self.prefill_instances = prefill_instances
-        self.decode_instances = decode_instances
-        print(" LoadBalancedScheduler, prefill/decode instance is = ",
-              len(self.prefill_bs_counter), len(self.decode_bs_counter))
-        print(" LoadBalancedScheduler, self.prefill_instances =",
-              self.prefill_instances)
-        print(" LoadBalancedScheduler, self.decode_instances =",
-              self.decode_instances)
-        self.prefill_schedule_index = 0
-        self.prefill_schedule_completion_index = 0
-        self.decode_schedule_index = 0
-        self.decode_schedule_completion_index = 0
-
-        self.prefill_model_len = query_instance_model_len(prefill_instances)
-        self.decode_model_len = query_instance_model_len(decode_instances)
-
-        logger.info("Prefill instance model lens: %s", self.prefill_model_len)
-        logger.info("Decode instance model lens: %s", self.decode_model_len)
-        super().__init__()
-
-    def schedule(self,
-                 cycler: itertools.cycle,
-                 is_prompt: int = None,
-                 request_len: int = None,
-                 max_tokens: int = None) -> str:
-        with self.lock:
-            if is_prompt:
-                candidates = [
-                    i for i, max_len in enumerate(self.prefill_model_len)
-                    if request_len + max_tokens <= max_len
-                ]
-                if not candidates:
-                    log_info_red(
-                       "No prefill instance can handle request_len=%d, "
-                       "max_tokens=%d",
-                        request_len,
-                        max_tokens,
-                    )
-                    return None
-
-                min_value = min([self.prefill_utils_counter[i] for i in candidates])
-                min_indices = [
-                    i for i in candidates
-                    if self.prefill_utils_counter[i] == min_value
-                ]
-                min_index = min_indices[0]
-
-                self.prefill_bs_counter[min_index] += 1
-                self.prefill_utils_counter[min_index] += request_len
-                self.prefill_schedule_index += 1
-                log_info_yellow(
-                    f"<schedule prefill {self.prefill_schedule_index}> "
-                    f"instance = {min_index}, min_tokens = {min_value}")
-                return self.prefill_instances[min_index]
-            else:
-                candidates = [
-                    i for i, max_len in enumerate(self.decode_model_len)
-                    if request_len + max_tokens <= max_len
-                ]
-                if not candidates:
-                    log_info_red(
-                        "No decode instance can handle request_len=%d, "
-                        "max_tokens=%d",
-                        request_len,
-                        max_tokens,
-                    )
-                    return None
-
-                min_value = min([self.decode_bs_counter[i] for i in candidates])
-                min_indices = [i for i in candidates if self.decode_bs_counter[i] == min_value]
-                if min_value == 0:
-                    min_index = next(i for i in candidates if self.decode_bs_counter[i] == 0)
-                else:
-                    min_indices = [
-                        i for i in candidates
-                        if self.decode_bs_counter[i] == min_value
-                    ]
-                    min_index = min(min_indices, key=lambda i: self.decode_kv_utils_counter[i])
-
-                self.decode_bs_counter[min_index] += 1
-                self.decode_kv_utils_counter[min_index] += request_len
-                self.decode_schedule_index += 1
-                log_info_blue(
-                    f"<schedule decode {self.decode_schedule_index}> "
-                    f"instance = {min_index}, min_batch = {min_value}")
-                log_info_blue(f"<schedule decode> "
-                              f"decode_bs_counter: {self.decode_bs_counter}")
-                log_info_blue(
-                    f"<schedule decode> "
-                    f"decode_kv_utils_counter: {self.decode_kv_utils_counter}")
-
-                return self.decode_instances[min_index]
-
-    def schedule_completion(self,
-                            prefill_instance: str = None,
-                            decode_instance: str = None,
-                            req_len: int = None):
-        with self.lock:
-            if prefill_instance:
-                index = self.prefill_instances.index(prefill_instance)
-                if self.prefill_bs_counter[index] == 0:
-                    logger.warning("No alive requests for prefill instance, skipping...")
-                else:
-                    self.prefill_schedule_completion_index += 1
-                    log_info_yellow(f"<Prefill completed "
-                                    f"{self.prefill_schedule_completion_index}> "
-                                    f"instance = {index}, req_len={req_len}")
-
-                    self.prefill_bs_counter[index] -= 1
-                    all_zero = True
-                    for index, _ in enumerate(self.prefill_instances):
-                        if self.prefill_bs_counter[index] != 0:
-                            all_zero = False
-                            break
-                    if all_zero:
-                        log_info_red("<Prefill in idle state>")
-                        for index, _ in enumerate(self.prefill_instances):
-                            self.prefill_utils_counter[index] = 0
-                    else:
-                        index = self.prefill_instances.index(prefill_instance)
-                        self.prefill_utils_counter[index] -= req_len
-
-            if decode_instance:
-                index = self.decode_instances.index(decode_instance)
-                if self.decode_bs_counter[index] == 0:
-                    logger.warning("No alive requests for decode instance, skipping...")
-                else:
-                    self.decode_schedule_completion_index += 1
-                    log_info_blue(f"<Decode completed "
-                                  f"{self.decode_schedule_completion_index}> "
-                                  f"instance = {index}, req_len={req_len}")
-
-                    self.decode_bs_counter[index] -= 1
-                    all_zero = True
-                    for index, _ in enumerate(self.decode_instances):
-                        if self.decode_bs_counter[index] != 0:
-                            all_zero = False
-                            break
-                    if all_zero:
-                        log_info_red("<Decode in idle state>")
-                        self.decode_kv_utils_counter = [0] * len(
-                            self.decode_instances)
-                    else:
-                        index = self.decode_instances.index(decode_instance)
-                        self.decode_kv_utils_counter[index] -= req_len
-                        log_info_blue(
-                            f"<schedule_completion decode> "
-                            f"decode_bs_counter: {self.decode_bs_counter}")
-                        log_info_blue(f"<schedule_completion decode> "
-                                      f"decode_kv_utils_counter: "
-                                      f"{self.decode_kv_utils_counter}")
-
-
 class ProxyServer:
 
     def __init__(
@@ -1114,14 +915,28 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--scheduler",
+        type=str,
+        choices=["round-robin", "load-balanced"],
+        default="load-balanced",
+        help="Scheduling policy (default: load-balanced)",
+    )
+    # Keep --roundrobin for backward compatibility
+    parser.add_argument(
         "--roundrobin",
         action="store_true",
-        help="Use Round Robin scheduling for load balancing",
+        help="(deprecated) Alias for --scheduler round-robin",
     )
     args = parser.parse_args()
     if args.roundrobin:
-        proxy_server = ProxyServer(args=args)
-    else:
-        proxy_server = ProxyServer(args=args,
-                                   scheduling_policy=LoadBalancedScheduler)
+        args.scheduler = "round-robin"
+
+    _SCHEDULER_MAP = {
+        "round-robin": None,
+        "load-balanced": LoadBalancedScheduler,
+    }
+    proxy_server = ProxyServer(
+        args=args,
+        scheduling_policy=_SCHEDULER_MAP[args.scheduler],
+    )
     proxy_server.run_server()

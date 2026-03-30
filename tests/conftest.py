@@ -36,8 +36,12 @@ def _run_server(app, port):
     uvicorn.Server(config).run()
 
 
-threading.Thread(target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True).start()
-threading.Thread(target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True).start()
+threading.Thread(
+    target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True
+).start()
+threading.Thread(
+    target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True
+).start()
 time.sleep(2)
 
 
