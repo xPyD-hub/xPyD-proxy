@@ -13,11 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
-from MicroPDProxyServer import (
-    LoadBalancedScheduler,
-    Proxy,
-    RoundRobinSchedulingPolicy,
-)
+from MicroPDProxyServer import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
@@ -124,7 +120,7 @@ async def test_health(client: AsyncClient):
     data = resp.json()
     # Proxy /health returns per-instance results keyed by host:port
     assert len(data) > 0
-    for inst, info in data.items():
+    for _inst, info in data.items():
         assert info["status"] == 200
         assert info["data"]["status"] == "ok"
 
@@ -241,9 +237,7 @@ def test_round_robin_schedule_completion_exists():
     policy.schedule_completion(
         prefill_instance="a:1", decode_instance=None, req_len=100
     )
-    policy.schedule_completion(
-        prefill_instance=None, decode_instance="b:2", req_len=50
-    )
+    policy.schedule_completion(prefill_instance=None, decode_instance="b:2", req_len=50)
 
 
 @patch("MicroPDProxyServer.query_instance_model_len", return_value=[131072, 131072])

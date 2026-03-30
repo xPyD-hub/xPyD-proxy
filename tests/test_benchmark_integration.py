@@ -62,24 +62,44 @@ def cluster():
         # Start prefill nodes
         for port in prefill_ports:
             p = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn",
-                 "dummy_nodes.prefill_node:app",
-                 "--host", "127.0.0.1", "--port", str(port),
-                 "--log-level", "error"],
-                env=env, cwd=_REPO_ROOT,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "dummy_nodes.prefill_node:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--log-level",
+                    "error",
+                ],
+                env=env,
+                cwd=_REPO_ROOT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             procs.append(p)
 
         # Start decode nodes
         for port in decode_ports:
             p = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn",
-                 "dummy_nodes.decode_node:app",
-                 "--host", "127.0.0.1", "--port", str(port),
-                 "--log-level", "error"],
-                env=env, cwd=_REPO_ROOT,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "dummy_nodes.decode_node:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--log-level",
+                    "error",
+                ],
+                env=env,
+                cwd=_REPO_ROOT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             procs.append(p)
 
@@ -94,13 +114,22 @@ def cluster():
         decode_args = [f"127.0.0.1:{p}" for p in decode_ports]
 
         proxy = subprocess.Popen(
-            [sys.executable, "core/MicroPDProxyServer.py",
-             "--model", MODEL_PATH,
-             "--prefill", *prefill_args,
-             "--decode", *decode_args,
-             "--port", str(proxy_port)],
-            env=env, cwd=_REPO_ROOT,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            [
+                sys.executable,
+                "core/MicroPDProxyServer.py",
+                "--model",
+                MODEL_PATH,
+                "--prefill",
+                *prefill_args,
+                "--decode",
+                *decode_args,
+                "--port",
+                str(proxy_port),
+            ],
+            env=env,
+            cwd=_REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         procs.append(proxy)
         assert _wait_port(proxy_port, timeout=30), "Proxy didn't start"
@@ -136,14 +165,15 @@ def test_models_endpoint(cluster):
     """Proxy /v1/models returns per-instance aggregated response."""
     with httpx.Client(
         base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
-        timeout=10, trust_env=False,
+        timeout=10,
+        trust_env=False,
     ) as c:
         r = c.get("/v1/models")
         assert r.status_code == 200
         data = r.json()
         # Proxy returns per-instance aggregated response
         assert len(data) > 0, "No instances in /v1/models response"
-        for instance, result in data.items():
+        for _instance, result in data.items():
             assert result["status"] == 200
             assert "data" in result["data"]
             assert len(result["data"]["data"]) > 0
@@ -154,7 +184,8 @@ def test_chat_completions(cluster):
     payload = {**CHAT_PAYLOAD, "model": cluster["model"]}
     with httpx.Client(
         base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
-        timeout=30, trust_env=False,
+        timeout=30,
+        trust_env=False,
     ) as c:
         r = c.post("/v1/chat/completions", json=payload)
         assert r.status_code == 200
@@ -169,7 +200,8 @@ def test_chat_completions_streaming(cluster):
     payload = {**CHAT_PAYLOAD, "model": cluster["model"], "stream": True}
     with httpx.Client(
         base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
-        timeout=30, trust_env=False,
+        timeout=30,
+        trust_env=False,
     ) as c:
         r = c.post("/v1/chat/completions", json=payload)
         assert r.status_code == 200
@@ -184,7 +216,8 @@ def test_status_topology(cluster):
     """Proxy status should reflect correct topology."""
     with httpx.Client(
         base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
-        timeout=10, trust_env=False,
+        timeout=10,
+        trust_env=False,
     ) as c:
         r = c.get("/status")
         assert r.status_code == 200
@@ -202,7 +235,8 @@ def test_concurrent_requests(cluster):
     def send_request(idx):
         with httpx.Client(
             base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
-            timeout=30, trust_env=False,
+            timeout=30,
+            trust_env=False,
         ) as c:
             r = c.post("/v1/chat/completions", json=payload)
             return r.status_code
@@ -240,26 +274,44 @@ def test_vllm_bench_serve(cluster):
 
     result = subprocess.run(
         [
-            vllm_bin, "bench", "serve",
-            "--host", "127.0.0.1",
-            "--port", str(cluster["proxy_port"]),
-            "--model", cluster["model"],
-            "--tokenizer", "gpt2",
-            "--dataset-name", "random",
-            "--random-input-len", "3000",
-            "--random-output-len", "200",
-            "--num-prompts", "1000",
-            "--burstiness", "100",
-            "--request-rate", "3.6",
-            "--endpoint", "/v1/completions",
+            vllm_bin,
+            "bench",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(cluster["proxy_port"]),
+            "--model",
+            cluster["model"],
+            "--tokenizer",
+            "gpt2",
+            "--dataset-name",
+            "random",
+            "--random-input-len",
+            "3000",
+            "--random-output-len",
+            "200",
+            "--num-prompts",
+            "1000",
+            "--burstiness",
+            "100",
+            "--request-rate",
+            "3.6",
+            "--endpoint",
+            "/v1/completions",
         ],
-        capture_output=True, text=True, timeout=600,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
 
     print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout)
     if result.stderr:
-        important = [line for line in result.stderr.split("\n")
-                     if "error" in line.lower() and "triton" not in line.lower()]
+        important = [
+            line
+            for line in result.stderr.split("\n")
+            if "error" in line.lower() and "triton" not in line.lower()
+        ]
         if important:
             print("STDERR:", "\n".join(important[-5:]))
 
