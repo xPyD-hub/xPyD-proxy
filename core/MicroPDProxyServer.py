@@ -27,11 +27,12 @@ import uvicorn
 from colorlog.escape_codes import escape_codes
 from fastapi import (APIRouter, Depends, FastAPI, Header, HTTPException,
                      Request, status)
-from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from transformers import AutoTokenizer
 from asyncio import CancelledError
 from fastapi.middleware.cors import CORSMiddleware
 from config import ProxyConfig
+from metrics import get_metrics, track_request_end, track_request_start
 from scheduler import (
     LoadBalancedScheduler,
     RoundRobinSchedulingPolicy,
@@ -236,6 +237,16 @@ class Proxy:
         self.router.post("/v1/rerank", response_class=JSONResponse)(self.post_rerankv1)
         self.router.post("/v2/rerank", response_class=JSONResponse)(self.post_rerankv2)
         self.router.post("/invocations", response_class=JSONResponse)(self.post_invocations)
+
+        # Prometheus metrics
+        self.router.get("/metrics")(self.get_metrics)
+
+    @staticmethod
+    async def get_metrics():
+        return Response(
+            content=get_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     async def get_from_instance(self, path: str, is_full_instancelist: int = 0):
         if not self.prefill_instances:
@@ -572,6 +583,11 @@ class Proxy:
                 raise
 
     async def create_completion(self, raw_request: Request):
+        return await self._create_completion(raw_request)
+
+    async def _create_completion(self, raw_request: Request):
+        _metrics_endpoint = "/v1/completions"
+        _metrics_start = track_request_start(_metrics_endpoint)
         try:
             try:
                 request = await raw_request.json()
@@ -680,10 +696,14 @@ class Proxy:
                 except Exception as e:
                     logger.error("[1] Exception in wrapped_generator: %s", str(e))
                     raise
+                finally:
+                    track_request_end(_metrics_endpoint, _metrics_start)
             return StreamingResponse(wrapped_generator(), media_type=media_type)
         except HTTPException:
+            track_request_end(_metrics_endpoint, _metrics_start)
             raise
         except Exception:
+            track_request_end(_metrics_endpoint, _metrics_start)
             logger.error("Error in create_completion: %s", sys.exc_info()[1])
             return JSONResponse(
                 {"error": {"message": "Internal proxy error", "type": "proxy_error"}},
@@ -691,6 +711,11 @@ class Proxy:
             )
 
     async def create_chat_completion(self, raw_request: Request):
+        return await self._create_chat_completion(raw_request)
+
+    async def _create_chat_completion(self, raw_request: Request):
+        _metrics_endpoint = "/v1/chat/completions"
+        _metrics_start = track_request_start(_metrics_endpoint)
         try:
             try:
                 request = await raw_request.json()
@@ -811,10 +836,14 @@ class Proxy:
                 except Exception as e:
                     logger.error("[1] Exception in wrapped_generator: %s", str(e))
                     raise
+                finally:
+                    track_request_end(_metrics_endpoint, _metrics_start)
             return StreamingResponse(wrapped_generator(), media_type=media_type)
         except HTTPException:
+            track_request_end(_metrics_endpoint, _metrics_start)
             raise
         except Exception:
+            track_request_end(_metrics_endpoint, _metrics_start)
             logger.error("Error in create_chat_completion: %s", sys.exc_info()[1])
             return JSONResponse(
                 {"error": {"message": "Internal proxy error", "type": "proxy_error"}},

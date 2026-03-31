@@ -12,3 +12,4 @@ colorlog>=6.8.0
 transformers>=4.38.0
 ruff>=0.4.0
 isort>=5.13.0
+prometheus-client>=0.20.0
