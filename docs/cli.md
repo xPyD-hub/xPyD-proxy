@@ -15,12 +15,12 @@ For development:
 pip install -e .
 ```
 
-After installation, the `pdproxy` command is available system-wide.
+After installation, the `xpyd` command is available system-wide.
 
 ## Quick Start
 
 ```bash
-pdproxy -c proxy.yaml
+xpyd -c proxy.yaml
 ```
 
 This starts the proxy using the specified YAML configuration file. The proxy
@@ -36,7 +36,7 @@ requests.
 | `--help` | Show help message and exit. |
 | `--version` | Show version number and exit. |
 | `--validate-config FILE` | Validate a YAML config file without starting the server. Exits with code 0 if valid, non-zero with error details if invalid. |
-| `PDPROXY_CONFIG` | Environment variable alternative to `--config`. |
+| `XPYD_CONFIG` | Environment variable alternative to `--config`. |
 
 ### Legacy CLI Arguments
 
@@ -46,7 +46,7 @@ recommended approach for new deployments.
 
 ## Startup Node Discovery
 
-When `pdproxy` starts, the following sequence occurs:
+When `xpyd` starts, the following sequence occurs:
 
 ```
 1. Parse configuration (CLI → env → YAML → defaults)
@@ -74,8 +74,8 @@ precedence order (highest priority first):
 
 | Priority | Source | Example |
 |---|---|---|
-| 1 (highest) | CLI arguments | `pdproxy --port 9000` |
-| 2 | Environment variables | `PDPROXY_CONFIG=proxy.yaml` |
+| 1 (highest) | CLI arguments | `xpyd --port 9000` |
+| 2 | Environment variables | `XPYD_CONFIG=proxy.yaml` |
 | 3 | YAML config file | `port: 8000` in proxy.yaml |
 | 4 (lowest) | Built-in defaults | port defaults to 8000 |
 
@@ -86,39 +86,39 @@ See [Configuration Guide](configuration.md) for the full YAML schema.
 ### Start with a config file
 
 ```bash
-pdproxy -c /etc/pdproxy/production.yaml
+xpyd -c /etc/xpyd/production.yaml
 ```
 
 ### Start with environment variable
 
 ```bash
-export PDPROXY_CONFIG=/etc/pdproxy/production.yaml
-pdproxy
+export XPYD_CONFIG=/etc/xpyd/production.yaml
+xpyd
 ```
 
 ### Validate configuration without starting
 
 ```bash
-pdproxy --validate-config proxy.yaml
+xpyd --validate-config proxy.yaml
 # Output: Configuration is valid.
 # Exit code: 0
 ```
 
 ```bash
-pdproxy --validate-config bad.yaml
+xpyd --validate-config bad.yaml
 # Output: Configuration error: "model" is required
 # Exit code: 1
 ```
 
 ### Use default config file
 
-If no `--config` or `PDPROXY_CONFIG` is set, `pdproxy` looks for
-`./pdproxy.yaml` in the current directory:
+If no `--config` or `XPYD_CONFIG` is set, `xpyd` looks for
+`./xpyd.yaml` in the current directory:
 
 ```bash
 cd /app
-ls pdproxy.yaml   # exists
-pdproxy           # automatically uses ./pdproxy.yaml
+ls xpyd.yaml   # exists
+xpyd           # automatically uses ./xpyd.yaml
 ```
 
 ### Run directly without installing

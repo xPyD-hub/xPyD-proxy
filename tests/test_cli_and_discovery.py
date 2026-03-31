@@ -73,7 +73,7 @@ class TestCLIParsing:
 
 
 # ------------------------------------------------------------------
-# Config resolution: --config > PDPROXY_CONFIG > ./pdproxy.yaml
+# Config resolution: --config > XPYD_CONFIG > ./xpyd.yaml
 # ------------------------------------------------------------------
 
 
@@ -84,24 +84,24 @@ class TestConfigResolution:
 
     def test_env_var_fallback(self):
         args = argparse.Namespace(config=None)
-        with patch.dict(os.environ, {"PDPROXY_CONFIG": "env.yaml"}):
+        with patch.dict(os.environ, {"XPYD_CONFIG": "env.yaml"}):
             assert _resolve_config_path(args) == "env.yaml"
 
     def test_default_file_fallback(self, tmp_path, monkeypatch):
-        # Create pdproxy.yaml in a temp dir and chdir there
-        (tmp_path / "pdproxy.yaml").write_text("model: test\n")
+        # Create xpyd.yaml in a temp dir and chdir there
+        (tmp_path / "xpyd.yaml").write_text("model: test\n")
         monkeypatch.chdir(tmp_path)
         args = argparse.Namespace(config=None)
-        env = {k: v for k, v in os.environ.items() if k != "PDPROXY_CONFIG"}
+        env = {k: v for k, v in os.environ.items() if k != "XPYD_CONFIG"}
         with patch.dict(os.environ, env, clear=True):
             result = _resolve_config_path(args)
         assert result is not None
-        assert result.endswith("pdproxy.yaml")
+        assert result.endswith("xpyd.yaml")
 
     def test_no_config_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)  # no pdproxy.yaml here
+        monkeypatch.chdir(tmp_path)  # no xpyd.yaml here
         args = argparse.Namespace(config=None)
-        env = {k: v for k, v in os.environ.items() if k != "PDPROXY_CONFIG"}
+        env = {k: v for k, v in os.environ.items() if k != "XPYD_CONFIG"}
         with patch.dict(os.environ, env, clear=True):
             assert _resolve_config_path(args) is None
 
