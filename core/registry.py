@@ -31,7 +31,7 @@ class CircuitBreakerState(str, Enum):
 
 
 @dataclass
-class NodeInfo:
+class InstanceInfo:
     """Per-node state tracked by the registry."""
 
     address: str
@@ -52,7 +52,7 @@ class InstanceRegistry:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._nodes: Dict[str, NodeInfo] = {}
+        self._nodes: Dict[str, InstanceInfo] = {}
 
     def add(self, role: str, address: str) -> None:
         """Register a node with the given role and address.
@@ -70,7 +70,7 @@ class InstanceRegistry:
         with self._lock:
             if address in self._nodes:
                 raise ValueError(f"Node {address!r} is already registered.")
-            self._nodes[address] = NodeInfo(address=address, role=role)
+            self._nodes[address] = InstanceInfo(address=address, role=role)
 
     def remove(self, address: str) -> None:
         """Remove a node from the registry.
@@ -166,21 +166,21 @@ class InstanceRegistry:
             node.consecutive_successes = 0
             node.consecutive_failures += 1
 
-    def get_node_info(self, address: str) -> NodeInfo:
+    def get_node_info(self, address: str) -> InstanceInfo:
         """Return a snapshot of node info.
 
         Args:
             address: Node address.
 
         Returns:
-            Copy of the NodeInfo for the given address.
+            Copy of the InstanceInfo for the given address.
 
         Raises:
             KeyError: If address is not registered.
         """
         with self._lock:
             node = self._get_node(address)
-            return NodeInfo(
+            return InstanceInfo(
                 address=node.address,
                 role=node.role,
                 status=node.status,
@@ -191,11 +191,11 @@ class InstanceRegistry:
                 consecutive_successes=node.consecutive_successes,
             )
 
-    def get_all_nodes(self) -> List[NodeInfo]:
+    def get_all_nodes(self) -> List[InstanceInfo]:
         """Return a snapshot of all registered nodes.
 
         Returns:
-            List of NodeInfo copies.
+            List of InstanceInfo copies.
         """
         with self._lock:
             return [self.get_node_info(addr) for addr in self._nodes]
@@ -242,7 +242,7 @@ class InstanceRegistry:
             node = self._get_node(address)
             node.active_request_count = max(0, node.active_request_count - 1)
 
-    def _get_node(self, address: str) -> NodeInfo:
+    def _get_node(self, address: str) -> InstanceInfo:
         """Get node by address or raise KeyError. Must hold lock."""
         try:
             return self._nodes[address]
