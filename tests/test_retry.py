@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for core/resilience.py — retry with exponential backoff + jitter."""
+"""Tests for core/retry.py — retry with exponential backoff + jitter."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from resilience import ResilienceConfig, ResilienceHandler, compute_backoff
+from retry import RetryConfig, RetryHandler, compute_backoff
 
 # ---------------------------------------------------------------------------
 # compute_backoff
@@ -45,7 +45,7 @@ class TestComputeBackoff:
 
 
 # ---------------------------------------------------------------------------
-# ResilienceHandler._should_retry
+# RetryHandler._should_retry
 # ---------------------------------------------------------------------------
 
 
@@ -53,7 +53,7 @@ class TestShouldRetry:
     """Verify retry eligibility logic."""
 
     def setup_method(self):
-        self.handler = ResilienceHandler(ResilienceConfig())
+        self.handler = RetryHandler(RetryConfig())
 
     def test_no_retry_4xx(self):
         for code in (400, 401, 403, 404, 422, 499):
@@ -75,14 +75,14 @@ class TestShouldRetry:
         assert self.handler._should_retry(501, False) is False
 
     def test_custom_retryable_codes(self):
-        config = ResilienceConfig(retryable_status_codes=[418, 500])
-        handler = ResilienceHandler(config)
+        config = RetryConfig(retryable_status_codes=[418, 500])
+        handler = RetryHandler(config)
         assert handler._should_retry(418, False) is True
         assert handler._should_retry(502, False) is False
 
 
 # ---------------------------------------------------------------------------
-# ResilienceHandler.execute
+# RetryHandler.execute
 # ---------------------------------------------------------------------------
 
 
@@ -98,8 +98,8 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_success_no_retry(self):
-        config = ResilienceConfig(enabled=True, max_retries=2)
-        handler = ResilienceHandler(config)
+        config = RetryConfig(enabled=True, max_retries=2)
+        handler = RetryHandler(config)
         resp_ok = _make_response(200)
 
         request_fn = AsyncMock(return_value=resp_ok)
@@ -111,13 +111,13 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_retry_then_success(self):
-        config = ResilienceConfig(
+        config = RetryConfig(
             enabled=True,
             max_retries=2,
             initial_backoff_ms=1,  # tiny for fast test
             jitter_factor=0.0,
         )
-        handler = ResilienceHandler(config)
+        handler = RetryHandler(config)
 
         responses = [_make_response(502), _make_response(200)]
         request_fn = AsyncMock(side_effect=responses)
@@ -130,13 +130,13 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_all_retries_fail(self):
-        config = ResilienceConfig(
+        config = RetryConfig(
             enabled=True,
             max_retries=2,
             initial_backoff_ms=1,
             jitter_factor=0.0,
         )
-        handler = ResilienceHandler(config)
+        handler = RetryHandler(config)
 
         responses = [_make_response(502), _make_response(503), _make_response(500)]
         request_fn = AsyncMock(side_effect=responses)
@@ -151,8 +151,8 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_no_retry_on_4xx(self):
-        config = ResilienceConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
-        handler = ResilienceHandler(config)
+        config = RetryConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
+        handler = RetryHandler(config)
 
         request_fn = AsyncMock(return_value=_make_response(404))
         select_fn = MagicMock(return_value="10.0.0.1:8200")
@@ -163,8 +163,8 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_no_retry_on_streaming(self):
-        config = ResilienceConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
-        handler = ResilienceHandler(config)
+        config = RetryConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
+        handler = RetryHandler(config)
 
         request_fn = AsyncMock(return_value=_make_response(502, is_streaming=True))
         select_fn = MagicMock(return_value="10.0.0.1:8200")
@@ -175,13 +175,13 @@ class TestRetryExecute:
 
     @pytest.mark.asyncio
     async def test_callbacks_invoked(self):
-        config = ResilienceConfig(
+        config = RetryConfig(
             enabled=True,
             max_retries=1,
             initial_backoff_ms=1,
             jitter_factor=0.0,
         )
-        handler = ResilienceHandler(config)
+        handler = RetryHandler(config)
 
         responses = [_make_response(502), _make_response(200)]
         request_fn = AsyncMock(side_effect=responses)
@@ -201,8 +201,8 @@ class TestRetryExecute:
     @pytest.mark.anyio
     async def test_disabled_single_attempt_success(self):
         """When enabled=False, exactly one attempt is made (no retry)."""
-        cfg = ResilienceConfig(enabled=False, max_retries=3)
-        handler = ResilienceHandler(cfg)
+        cfg = RetryConfig(enabled=False, max_retries=3)
+        handler = RetryHandler(cfg)
         resp = MagicMock(status_code=200)
         request_fn = AsyncMock(return_value=resp)
         select_fn = MagicMock(return_value="node-1")
@@ -215,8 +215,8 @@ class TestRetryExecute:
     @pytest.mark.anyio
     async def test_disabled_single_attempt_failure(self):
         """When enabled=False and request fails, no retry is attempted."""
-        cfg = ResilienceConfig(enabled=False, max_retries=3)
-        handler = ResilienceHandler(cfg)
+        cfg = RetryConfig(enabled=False, max_retries=3)
+        handler = RetryHandler(cfg)
         resp = MagicMock(status_code=502)
         request_fn = AsyncMock(return_value=resp)
         select_fn = MagicMock(return_value="node-1")
@@ -229,8 +229,8 @@ class TestRetryExecute:
     @pytest.mark.anyio
     async def test_select_instance_returns_none(self):
         """When select_instance_fn returns None during retry, stop retrying."""
-        cfg = ResilienceConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
-        handler = ResilienceHandler(cfg)
+        cfg = RetryConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
+        handler = RetryHandler(cfg)
         resp = MagicMock(status_code=502)
         request_fn = AsyncMock(return_value=resp)
         call_count = 0
@@ -250,8 +250,8 @@ class TestRetryExecute:
     @pytest.mark.anyio
     async def test_select_instance_raises(self):
         """When select_instance_fn raises during retry, stop retrying."""
-        cfg = ResilienceConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
-        handler = ResilienceHandler(cfg)
+        cfg = RetryConfig(enabled=True, max_retries=2, initial_backoff_ms=1)
+        handler = RetryHandler(cfg)
         resp = MagicMock(status_code=502)
         request_fn = AsyncMock(return_value=resp)
         call_count = 0
@@ -274,11 +274,11 @@ class TestRetryExecute:
 # ---------------------------------------------------------------------------
 
 
-class TestResilienceConfigYAML:
-    """Verify ResilienceConfig integrates with ProxyConfig."""
+class TestRetryConfigYAML:
+    """Verify RetryConfig integrates with ProxyConfig."""
 
     def test_default_disabled(self):
-        config = ResilienceConfig()
+        config = RetryConfig()
         assert config.enabled is False
         assert config.max_retries == 2
 
@@ -289,7 +289,7 @@ class TestResilienceConfigYAML:
 model: test-model
 decode:
   - "127.0.0.1:8000"
-resilience:
+retry:
   enabled: true
   max_retries: 3
   initial_backoff_ms: 200
@@ -312,10 +312,10 @@ resilience:
         import config as config_mod
 
         proxy_cfg = config_mod.ProxyConfig.from_args(args)
-        assert proxy_cfg.resilience.enabled is True
-        assert proxy_cfg.resilience.max_retries == 3
-        assert proxy_cfg.resilience.initial_backoff_ms == 200
-        assert proxy_cfg.resilience.retryable_status_codes == [500, 502]
+        assert proxy_cfg.retry.enabled is True
+        assert proxy_cfg.retry.max_retries == 3
+        assert proxy_cfg.retry.initial_backoff_ms == 200
+        assert proxy_cfg.retry.retryable_status_codes == [500, 502]
 
     def test_unknown_retry_key_rejected(self, tmp_path):
         yaml_file = tmp_path / "config.yaml"
@@ -324,7 +324,7 @@ resilience:
 model: test-model
 decode:
   - "127.0.0.1:8000"
-resilience:
+retry:
   enabled: true
   bogus_key: 42
 """

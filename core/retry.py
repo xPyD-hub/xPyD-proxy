@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Resilience: retry with exponential backoff and jitter.
+"""Retry with exponential backoff with exponential backoff and jitter.
 
-Provides :class:`ResilienceConfig` (Pydantic model for YAML configuration)
-and :class:`ResilienceHandler` which executes a request function with automatic
+Provides :class:`RetryConfig` (Pydantic model for YAML configuration)
+and :class:`RetryHandler` which executes a request function with automatic
 retry on transient failures, selecting a different backend instance for
 each attempt.
 """
@@ -19,8 +19,8 @@ from pydantic import BaseModel, ConfigDict
 logger = logging.getLogger(__name__)
 
 
-class ResilienceConfig(BaseModel):
-    """Configuration for resilience: retry with exponential backoff + jitter."""
+class RetryConfig(BaseModel):
+    """Configuration for retry with exponential backoff + jitter."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -52,14 +52,14 @@ def compute_backoff(
     return delay * (1.0 + jitter)
 
 
-class ResilienceHandler:
-    """Execute requests with resilience (retry, backoff, and instance re-selection).
+class RetryHandler:
+    """Execute requests with retry (retry, backoff, and instance re-selection).
 
     Uses dependency injection (callback functions) rather than importing
     the registry directly, keeping the module decoupled.
     """
 
-    def __init__(self, config: ResilienceConfig) -> None:
+    def __init__(self, config: RetryConfig) -> None:
         self.config = config
 
     def _should_retry(self, status_code: int, is_streaming: bool) -> bool:
@@ -90,7 +90,7 @@ class ResilienceHandler:
         on_failure:
             Optional callback ``(instance, response, attempt) -> None``.
         """
-        # When resilience is disabled, perform exactly one attempt.
+        # When retry is disabled, perform exactly one attempt.
         if not self.config.enabled:
             instance = select_instance_fn(excluded=None)
             response = await request_fn(instance)

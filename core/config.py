@@ -38,9 +38,9 @@ class CircuitBreakerConfig(BaseModel):
     window_duration_seconds: int = 60
 
 try:
-    from .resilience import ResilienceConfig
+    from .retry import RetryConfig
 except ImportError:
-    from resilience import ResilienceConfig
+    from retry import RetryConfig
 
 try:
     from .topology import expand_topology
@@ -76,7 +76,7 @@ class ProxyConfig(BaseModel):
     probe_interval_seconds: int = 10
     health_check: HealthCheckConfig = HealthCheckConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
-    resilience: ResilienceConfig = ResilienceConfig()
+    retry: RetryConfig = RetryConfig()
 
     # ------------------------------------------------------------------
     # Validators
@@ -270,13 +270,13 @@ class ProxyConfig(BaseModel):
             health_cfg = HealthCheckConfig(**health_check_raw)
             yaml_data["health_check"] = health_cfg
 
-        # 1e. Handle nested 'resilience' section
-        resilience_raw = yaml_data.pop("resilience", None)
-        if resilience_raw is not None:
-            if not isinstance(resilience_raw, dict):
+        # 1e. Handle nested 'retry' section
+        retry_raw = yaml_data.pop("retry", None)
+        if retry_raw is not None:
+            if not isinstance(retry_raw, dict):
                 raise ValueError(
-                    f"'resilience' must be a mapping, "
-                    f"got {type(resilience_raw).__name__}"
+                    f"'retry' must be a mapping, "
+                    f"got {type(retry_raw).__name__}"
                 )
 
         # 2. Pop YAML-only keys that don't map directly to ProxyConfig fields
@@ -339,8 +339,8 @@ class ProxyConfig(BaseModel):
                 **circuit_breaker_yaml
             )
 
-        # 8. Resilience config (YAML only, no CLI override)
-        if resilience_raw is not None:
-            merged["resilience"] = ResilienceConfig(**resilience_raw)
+        # 8. Retry config (YAML only, no CLI override)
+        if retry_raw is not None:
+            merged["retry"] = RetryConfig(**retry_raw)
 
         return cls(**merged)
