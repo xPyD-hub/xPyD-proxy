@@ -17,6 +17,66 @@ The system uses a shell script `xpyd_start_proxy.sh` to configure and launch a d
 
 ---
 
+## Task 10 (PLANNED)
+
+### Goal
+Add advanced load balancing strategies beyond round-robin and load-balanced. Inspired by [vllm-project/router](https://github.com/vllm-project/router).
+
+### Scope
+
+#### 10a: Consistent Hash
+- Route requests from the same session/user to the same worker node
+- Enables KV cache reuse across multi-turn conversations
+- Hash key priority: `X-Session-ID` header > `user` field in request body > client IP
+- When a node goes down, only affected sessions are redistributed (minimal disruption)
+- YAML config:
+  ```yaml
+  scheduling: consistent_hash
+  consistent_hash:
+    header: "X-Session-ID"         # default header to hash on
+  ```
+
+#### 10b: Power of Two Choices
+- Pick 2 random worker nodes, forward to the one with fewer active requests
+- Simple yet effective — avoids the overhead of tracking all workers while still load-aware
+- YAML config:
+  ```yaml
+  scheduling: power_of_two
+  ```
+
+#### 10c: Cache-Aware Routing
+- Optimize for prefix cache hits by routing similar prompts to the same worker
+- Hash the prompt prefix (first N tokens) to select the worker
+- Configurable prefix length for hashing
+- YAML config:
+  ```yaml
+  scheduling: cache_aware
+  cache_aware:
+    prefix_length: 256             # tokens to hash for routing
+  ```
+
+#### 10d: Policy Registry
+- Implement a policy registry/factory pattern so new scheduling strategies can be added by:
+  1. Writing a class that implements `SchedulingPolicy`
+  2. Registering it in the registry
+- `scheduling` YAML key selects the active policy by name
+- Extensible for future custom policies
+
+### Constraints
+- All new policies must implement the existing `SchedulingPolicy` interface
+- Default scheduling remains `loadbalanced` for backward compatibility
+- Must not break existing tests
+- Each policy must have comprehensive UT
+
+### Testing / verification
+- UT for consistent hash: same session → same worker, node removal → minimal redistribution
+- UT for power of two: verify load-aware selection
+- UT for cache-aware: same prefix → same worker
+- UT for policy registry: register, select, unknown policy error
+- CI green
+
+---
+
 ## Task 9 (PLANNED)
 
 ### Goal
