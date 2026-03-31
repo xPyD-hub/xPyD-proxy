@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from topology import expand_topology
+
 
 class ProxyConfig(BaseModel):
     """Validated proxy configuration."""
@@ -30,6 +32,7 @@ class ProxyConfig(BaseModel):
     prefill: List[str] = []
     decode: List[str]
     port: int = 8000
+    log_level: str = "warning"
     generator_on_p_node: bool = False
     roundrobin: bool = False
     admin_api_key: Optional[str] = None
@@ -44,6 +47,16 @@ class ProxyConfig(BaseModel):
     def _port_in_range(cls, v: int) -> int:
         if not (1 <= v <= 65535):
             raise ValueError(f"port must be between 1 and 65535, got {v}")
+        return v
+
+    @field_validator("log_level")
+    @classmethod
+    def _valid_log_level(cls, v: str) -> str:
+        valid = {"debug", "info", "warning", "error"}
+        if v not in valid:
+            raise ValueError(
+                f"log_level must be one of {sorted(valid)}, got {v!r}"
+            )
         return v
 
     @field_validator("prefill", "decode", mode="before")
@@ -114,6 +127,44 @@ class ProxyConfig(BaseModel):
         return data
 
     # ------------------------------------------------------------------
+    # Topology expansion helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _expand_node_config(role: str, node_cfg: Any) -> List[str]:
+        """Expand a YAML node config into a flat list of host:port strings.
+
+        Accepts either:
+        - A list of strings (backward compat): ``["10.0.0.1:8000"]``
+        - A topology dict: ``{nodes: [...], tp_size: N, dp_size: M, ...}``
+        """
+        if isinstance(node_cfg, list):
+            return node_cfg
+        if isinstance(node_cfg, dict):
+            required = {"nodes", "tp_size", "dp_size", "world_size_per_node"}
+            missing = required - set(node_cfg.keys())
+            if missing:
+                raise ValueError(
+                    f"{role} topology config missing keys: {sorted(missing)}"
+                )
+            unknown = set(node_cfg.keys()) - required
+            if unknown:
+                raise ValueError(
+                    f"{role} topology config has unknown keys: {sorted(unknown)}"
+                )
+            return expand_topology(
+                role=role,
+                nodes=node_cfg["nodes"],
+                tp_size=node_cfg["tp_size"],
+                dp_size=node_cfg["dp_size"],
+                world_size_per_node=node_cfg["world_size_per_node"],
+            )
+        raise ValueError(
+            f"{role} must be a list of addresses or a topology dict, "
+            f"got {type(node_cfg).__name__}"
+        )
+
+    # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
 
@@ -132,6 +183,7 @@ class ProxyConfig(BaseModel):
             "port": 8000,
             "generator_on_p_node": False,
             "roundrobin": False,
+            "log_level": "warning",
         }
 
         # 1. Load YAML base (if provided)
@@ -139,6 +191,14 @@ class ProxyConfig(BaseModel):
         config_path = getattr(args, "config", None)
         if config_path:
             yaml_data = cls.load_yaml(config_path)
+
+        # 1b. Expand topology-style prefill/decode configs into flat lists
+        for role in ("prefill", "decode"):
+            if role in yaml_data and not isinstance(yaml_data[role], list):
+                yaml_data[role] = cls._expand_node_config(role, yaml_data[role])
+            elif role in yaml_data and isinstance(yaml_data[role], list):
+                # Could be a list of strings (backward compat) — keep as-is
+                yaml_data[role] = cls._expand_node_config(role, yaml_data[role])
 
         # 2. Build merged dict: YAML first, then CLI overrides.
         #    NOTE: argparse cannot distinguish "user explicitly passed the
