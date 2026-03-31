@@ -257,3 +257,16 @@ class TestMissingModel:
         args = _make_args(config=str(p))
         cfg = ProxyConfig.from_args(args)
         assert cfg.model == "/yaml/model"
+
+    def test_unknown_keys_rejected_via_from_args(self, tmp_yaml):
+        p = tmp_yaml(
+            """\
+            model: /path/model
+            decode:
+              - "10.0.0.1:8000"
+            unknown_field: oops
+            """
+        )
+        args = _make_args(config=str(p))
+        with pytest.raises(ValueError, match="Unknown keys"):
+            ProxyConfig.from_args(args)

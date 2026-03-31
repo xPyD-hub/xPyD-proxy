@@ -153,21 +153,26 @@ class ProxyConfig(BaseModel):
             # If neither CLI nor YAML provided a value, omit from merged
             # so Pydantic uses its own default (or raises for required fields).
 
-        # scheduling field from YAML (not a ProxyConfig field directly)
+        # Pop YAML-only keys that don't map directly to ProxyConfig fields
         scheduling = yaml_data.pop("scheduling", None)
+        admin_api_key_yaml = yaml_data.pop("admin_api_key", None)
+        openai_api_key_yaml = yaml_data.pop("openai_api_key", None)
+
+        # Reject unknown YAML keys early
+        known_fields = set(_arg_defaults.keys())
+        unknown = set(yaml_data.keys()) - known_fields
+        if unknown:
+            raise ValueError(
+                f"Unknown keys in YAML config: {sorted(unknown)}"
+            )
+
+        # scheduling → roundrobin mapping
         if scheduling is not None and "roundrobin" not in merged:
             merged["roundrobin"] = scheduling == "roundrobin"
 
         # 3. Environment variables override YAML for api keys
-        admin_key = os.environ.get("ADMIN_API_KEY") or yaml_data.get(
-            "admin_api_key"
-        )
-        openai_key = os.environ.get("OPENAI_API_KEY") or yaml_data.get(
-            "openai_api_key"
-        )
-        # Pop api keys from yaml_data so they don't cause extra-field errors
-        yaml_data.pop("admin_api_key", None)
-        yaml_data.pop("openai_api_key", None)
+        admin_key = os.environ.get("ADMIN_API_KEY") or admin_api_key_yaml
+        openai_key = os.environ.get("OPENAI_API_KEY") or openai_api_key_yaml
         if admin_key:
             merged.setdefault("admin_api_key", admin_key)
         if openai_key:
