@@ -31,13 +31,24 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 from transformers import AutoTokenizer
 from asyncio import CancelledError
 from fastapi.middleware.cors import CORSMiddleware
-from config import ProxyConfig
-from metrics import get_metrics, track_request_end, track_request_start
-from scheduler import (
-    LoadBalancedScheduler,
-    RoundRobinSchedulingPolicy,
-    SchedulingPolicy,
-)
+try:
+    from .config import ProxyConfig
+    from .discovery import NodeDiscovery
+    from .metrics import get_metrics, track_request_end, track_request_start
+    from .scheduler import (
+        LoadBalancedScheduler,
+        RoundRobinSchedulingPolicy,
+        SchedulingPolicy,
+    )
+except ImportError:
+    from config import ProxyConfig
+    from discovery import NodeDiscovery
+    from metrics import get_metrics, track_request_end, track_request_start
+    from scheduler import (
+        LoadBalancedScheduler,
+        RoundRobinSchedulingPolicy,
+        SchedulingPolicy,
+    )
 
 formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
                               "%Y-%m-%d %H:%M:%S")
@@ -897,6 +908,13 @@ class ProxyServer:
                     f"Error communicating with {instance}: {str(e)}") from e
 
     def run_server(self):
+        discovery = NodeDiscovery(
+            prefill_instances=self.config.prefill,
+            decode_instances=self.config.decode,
+            probe_interval=self.config.probe_interval_seconds,
+            wait_timeout=self.config.wait_timeout_seconds,
+        )
+
         app = FastAPI()
         app.add_middleware(
             CORSMiddleware,
@@ -905,6 +923,27 @@ class ProxyServer:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+        @app.middleware("http")
+        async def _check_readiness(request: Request, call_next):
+            # Allow health/status/metrics endpoints through always
+            path = request.url.path
+            if path in ("/health", "/ping", "/status", "/metrics"):
+                return await call_next(request)
+            if not discovery.is_ready:
+                return JSONResponse(
+                    {"error": "waiting for backend nodes"},
+                    status_code=503,
+                )
+            return await call_next(request)
+
+        @app.on_event("startup")
+        async def _start_discovery():
+            await discovery.start()
+
+        @app.on_event("shutdown")
+        async def _stop_discovery():
+            await discovery.stop()
 
         app.include_router(self.proxy_instance.router)
         config = uvicorn.Config(app,
@@ -916,13 +955,26 @@ class ProxyServer:
         server.run()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser("vLLM disaggregated proxy server.")
+_VERSION = "0.1.0"
+
+
+def _build_parser():
+    """Build the argument parser for the proxy CLI."""
+    parser = argparse.ArgumentParser(
+        prog="pdproxy",
+        description="MicroPDProxy — lightweight PD proxy server",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_VERSION}")
     parser.add_argument("--config",
                         "-c",
                         type=str,
                         default=None,
                         help="Path to YAML configuration file")
+    parser.add_argument("--validate-config",
+                        type=str,
+                        default=None,
+                        metavar="FILE",
+                        help="Validate YAML config and exit (no server start)")
     parser.add_argument("--model",
                         "-m",
                         type=str,
@@ -970,9 +1022,52 @@ if __name__ == "__main__":
         dest="log_level",
         help="Log level: debug, info, warning, error (default: warning)",
     )
+    return parser
+
+
+def _resolve_config_path(args):
+    """Resolve the config file path: --config > PDPROXY_CONFIG env > ./pdproxy.yaml."""
+    if args.config:
+        return args.config
+    env_config = os.environ.get("PDPROXY_CONFIG")
+    if env_config:
+        return env_config
+    default_path = os.path.join(os.getcwd(), "pdproxy.yaml")
+    if os.path.exists(default_path):
+        return default_path
+    return None
+
+
+def main():
+    """Entry point for the ``pdproxy`` CLI."""
+    parser = _build_parser()
     args = parser.parse_args()
+
+    # --validate-config mode: validate and exit
+    if args.validate_config:
+        args.config = args.validate_config
+        try:
+            config = ProxyConfig.from_args(args)
+            print(f"Config is valid: {args.validate_config}")
+            print(f"  model: {config.model}")
+            print(f"  prefill: {len(config.prefill)} instances")
+            print(f"  decode: {len(config.decode)} instances")
+            print(f"  port: {config.port}")
+            print(f"  log_level: {config.log_level}")
+            sys.exit(0)
+        except Exception as exc:
+            print(f"Config validation failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Resolve config path with precedence
+    args.config = _resolve_config_path(args)
+
     config = ProxyConfig.from_args(args)
     scheduling_policy = None if config.roundrobin else LoadBalancedScheduler
     proxy_server = ProxyServer(config=config,
                                scheduling_policy=scheduling_policy)
     proxy_server.run_server()
+
+
+if __name__ == "__main__":
+    main()

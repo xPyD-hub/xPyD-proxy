@@ -99,7 +99,8 @@ def _spawn_proxy(
 ) -> subprocess.Popen:
     command = [
         PYTHON,
-        "core/MicroPDProxyServer.py",
+        "-m",
+        "core.MicroPDProxyServer",
         "--model",
         TOKENIZER_DIR,
         "--port",

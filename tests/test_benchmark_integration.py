@@ -116,7 +116,8 @@ def cluster():
         proxy = subprocess.Popen(
             [
                 sys.executable,
-                "core/MicroPDProxyServer.py",
+                "-m",
+                "core.MicroPDProxyServer",
                 "--model",
                 MODEL_PATH,
                 "--prefill",

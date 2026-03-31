@@ -20,7 +20,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from topology import expand_topology
+try:
+    from .topology import expand_topology
+except ImportError:
+    from topology import expand_topology
 
 
 class ProxyConfig(BaseModel):
@@ -37,6 +40,8 @@ class ProxyConfig(BaseModel):
     roundrobin: bool = False
     admin_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    wait_timeout_seconds: int = 600
+    probe_interval_seconds: int = 10
 
     # ------------------------------------------------------------------
     # Validators
@@ -184,6 +189,8 @@ class ProxyConfig(BaseModel):
             "generator_on_p_node": False,
             "roundrobin": False,
             "log_level": "warning",
+            "wait_timeout_seconds": 600,
+            "probe_interval_seconds": 10,
         }
 
         # 1. Load YAML base (if provided)
@@ -196,6 +203,25 @@ class ProxyConfig(BaseModel):
         for role in ("prefill", "decode"):
             if role in yaml_data:
                 yaml_data[role] = cls._expand_node_config(role, yaml_data[role])
+
+        # 1c. Flatten nested 'startup' section into top-level keys
+        startup = yaml_data.pop("startup", None)
+        if startup is not None and not isinstance(startup, dict):
+            raise ValueError(
+                f"'startup' section must be a mapping, got {type(startup).__name__}"
+            )
+        if isinstance(startup, dict):
+            for key in ("wait_timeout_seconds", "probe_interval_seconds"):
+                if key in startup:
+                    yaml_data[key] = startup[key]
+            unknown_startup = set(startup.keys()) - {
+                "wait_timeout_seconds",
+                "probe_interval_seconds",
+            }
+            if unknown_startup:
+                raise ValueError(
+                    f"Unknown keys in startup config: {sorted(unknown_startup)}"
+                )
 
         # 2. Pop YAML-only keys that don't map directly to ProxyConfig fields
         scheduling = yaml_data.pop("scheduling", None)

@@ -219,7 +219,7 @@ def test_policy_selectable_via_yaml():
 
 ---
 
-## Task 9 (PLANNED)
+## Task 9 (IN PROGRESS)
 
 ### Goal
 Make the proxy self-healing: detect failing nodes, stop sending them traffic, retry failed requests on healthy nodes, and automatically recover when nodes come back. Inspired by [vllm-project/router](https://github.com/vllm-project/router).
@@ -599,7 +599,7 @@ def test_retry_routes_to_different_node():
 
 ---
 
-## Task 8 (IN PROGRESS)
+## Task 8 (DONE)
 
 ### Goal
 Package the proxy as an installable CLI tool (`pdproxy`) with startup node discovery.

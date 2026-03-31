@@ -30,13 +30,32 @@ for the full architecture overview.
 ## Quick Start
 
 ```bash
+# Install as a CLI tool
+pip install .
+
+# Or install in dev mode
+pip install -e .
+
+# Start with a YAML config
+pdproxy --config examples/proxy.yaml
+
+# Or use the traditional way
 pip install -r requirements.txt
+python core/MicroPDProxyServer.py --config examples/proxy.yaml
+```
 
-# Start the dummy prefill node (port 8100)
-uvicorn dummy_nodes.prefill_node:app --host 0.0.0.0 --port 8100
+## Installation
 
-# Start the dummy decode node (port 8200)
-uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
+```bash
+# Install the pdproxy CLI
+pip install .
+
+# Verify
+pdproxy --version
+pdproxy --help
+
+# Validate a config without starting the server
+pdproxy --validate-config examples/proxy.yaml
 ```
 
 ## Usage
@@ -71,7 +90,29 @@ scheduling: loadbalanced
 Start the proxy:
 
 ```bash
+pdproxy --config proxy.yaml
+# or
 python core/MicroPDProxyServer.py --config proxy.yaml
+```
+
+The proxy also searches for config in this order:
+1. `--config` / `-c` CLI argument
+2. `PDPROXY_CONFIG` environment variable
+3. `./pdproxy.yaml` in the current directory
+
+### Startup Node Discovery
+
+The proxy starts listening immediately but returns **503** on business
+endpoints (`/v1/completions`, `/v1/chat/completions`) until at least
+1 prefill + 1 decode node respond healthy. Health/status/metrics
+endpoints are always available.
+
+Configure in YAML:
+
+```yaml
+startup:
+  wait_timeout_seconds: 600   # exit if nodes not ready after 10 min
+  probe_interval_seconds: 10  # probe /health every 10s
 ```
 
 The topology parameters expand into instance addresses automatically:

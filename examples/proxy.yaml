@@ -1,6 +1,8 @@
 # MicroPDProxy Configuration Example
 #
 # Usage:
+#   pdproxy --config examples/proxy.yaml
+#   # or
 #   python core/MicroPDProxyServer.py --config examples/proxy.yaml
 #
 # All fields shown with their defaults unless noted otherwise.
@@ -60,3 +62,16 @@ generator_on_p_node: false      # generate first token on prefill node
 # Env vars take precedence over YAML values.
 admin_api_key: ""
 openai_api_key: ""
+
+# ============================================================
+# Startup Node Discovery (optional)
+# ============================================================
+# The proxy starts listening immediately but returns 503 on
+# business endpoints until at least 1 prefill + 1 decode node
+# respond healthy on /health.
+#
+# Set wait_timeout_seconds: 0 to skip discovery and accept
+# requests immediately (legacy behavior).
+startup:
+  wait_timeout_seconds: 600     # max wait for minimum nodes (default: 600s)
+  probe_interval_seconds: 10    # health probe interval (default: 10s)

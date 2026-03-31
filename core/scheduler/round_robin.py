@@ -5,7 +5,10 @@ import itertools
 import logging
 from typing import Optional
 
-from scheduler.scheduler_base import SchedulingPolicy
+try:
+    from .scheduler_base import SchedulingPolicy
+except ImportError:
+    from scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 
