@@ -108,23 +108,21 @@ class TestGetAvailableInstances:
 
     def test_half_open_circuit_breaker_excluded(self) -> None:
         """Trip breaker then advance time so it becomes HALF_OPEN."""
-        reg = InstanceRegistry()
+        t = [0.0]
+        reg = InstanceRegistry(clock=lambda: t[0])
         reg.add("decode", "10.0.0.1:8200")
         reg.mark_healthy("10.0.0.1:8200")
 
-        # Use a controllable clock on the circuit breaker
-        t = [0.0]
-        info = reg.get_instance_info("10.0.0.1:8200")
-        cb = info.circuit_breaker
-        cb._clock = lambda: t[0]
-
+        # Default failure_threshold is 5
         for _ in range(5):
-            cb.record_failure()
-        assert cb.state == CircuitBreakerState.OPEN
+            reg.record_failure("10.0.0.1:8200")
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.OPEN
 
-        # Advance past timeout
-        t[0] = cb.timeout_duration_seconds + 1
-        assert cb.state == CircuitBreakerState.HALF_OPEN
+        # Advance past timeout (default 30s)
+        t[0] = 31.0
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.HALF_OPEN
         assert reg.get_available_instances("decode") == []
 
     def test_role_filtering(self) -> None:
@@ -183,27 +181,26 @@ class TestRecordSuccessFailure:
         assert info.circuit_breaker_state == CircuitBreakerState.OPEN
 
     def test_record_success_closes_half_open(self) -> None:
-        reg = InstanceRegistry()
+        t = [0.0]
+        reg = InstanceRegistry(clock=lambda: t[0])
         reg.add("decode", "10.0.0.1:8200")
 
-        # Get a handle to the actual circuit breaker and use a fake clock
-        t = [0.0]
-        cb = reg.get_instance_info("10.0.0.1:8200").circuit_breaker
-        cb._clock = lambda: t[0]
-
-        # Trip the breaker
+        # Trip the breaker (default failure_threshold=5)
         for _ in range(5):
-            cb.record_failure()
-        assert cb.state == CircuitBreakerState.OPEN
+            reg.record_failure("10.0.0.1:8200")
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.OPEN
 
         # Advance past timeout → HALF_OPEN
-        t[0] = cb.timeout_duration_seconds + 1
-        assert cb.state == CircuitBreakerState.HALF_OPEN
+        t[0] = 31.0
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.HALF_OPEN
 
         # success_threshold defaults to 2
-        cb.record_success()
-        cb.record_success()
-        assert cb.state == CircuitBreakerState.CLOSED
+        reg.record_success("10.0.0.1:8200")
+        reg.record_success("10.0.0.1:8200")
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.CLOSED
 
     def test_record_on_nonexistent_raises(self) -> None:
         reg = InstanceRegistry()

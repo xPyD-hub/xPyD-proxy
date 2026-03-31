@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 try:
     from circuit_breaker import CircuitBreaker, CircuitBreakerState
@@ -29,19 +29,30 @@ class InstanceStatus(str, Enum):
 
 @dataclass
 class InstanceInfo:
-    """Per-instance state tracked by the registry."""
+    """Read-only snapshot of per-instance state returned by the registry.
+
+    This is a pure data snapshot — it does **not** hold a reference to any
+    mutable internal object such as a ``CircuitBreaker``.
+    """
 
     address: str
     role: str  # "prefill" or "decode"
     status: InstanceStatus = InstanceStatus.UNKNOWN
     last_health_check: Optional[float] = None
     active_request_count: int = 0
-    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
+    circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
 
-    @property
-    def circuit_breaker_state(self) -> CircuitBreakerState:
-        """Current circuit breaker state, delegated to the CircuitBreaker."""
-        return self.circuit_breaker.state
+
+@dataclass
+class _InstanceRecord:
+    """Internal mutable record stored inside the registry."""
+
+    address: str
+    role: str
+    status: InstanceStatus = InstanceStatus.UNKNOWN
+    last_health_check: Optional[float] = None
+    active_request_count: int = 0
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
 
 
 class InstanceRegistry:
@@ -50,9 +61,13 @@ class InstanceRegistry:
     All access is protected by a reentrant lock for thread safety.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        clock: Optional[Callable[[], float]] = None,
+    ) -> None:
         self._lock = threading.RLock()
-        self._instances: Dict[str, InstanceInfo] = {}
+        self._instances: Dict[str, _InstanceRecord] = {}
+        self._clock = clock
 
     def add(self, role: str, address: str) -> None:
         """Register an instance with the given role and address.
@@ -70,10 +85,10 @@ class InstanceRegistry:
         with self._lock:
             if address in self._instances:
                 raise ValueError(f"Instance {address!r} is already registered.")
-            self._instances[address] = InstanceInfo(
+            self._instances[address] = _InstanceRecord(
                 address=address,
                 role=role,
-                circuit_breaker=CircuitBreaker(),
+                circuit_breaker=CircuitBreaker(clock=self._clock),
             )
 
     def remove(self, address: str) -> None:
@@ -188,7 +203,7 @@ class InstanceRegistry:
                 status=instance.status,
                 last_health_check=instance.last_health_check,
                 active_request_count=instance.active_request_count,
-                circuit_breaker=instance.circuit_breaker,
+                circuit_breaker_state=instance.circuit_breaker.state,
             )
 
     def get_all_instances(self) -> List[InstanceInfo]:
@@ -226,7 +241,7 @@ class InstanceRegistry:
             instance = self._get_instance(address)
             instance.active_request_count = max(0, instance.active_request_count - 1)
 
-    def _get_instance(self, address: str) -> InstanceInfo:
+    def _get_instance(self, address: str) -> _InstanceRecord:
         """Get instance by address or raise KeyError. Must hold lock."""
         try:
             return self._instances[address]
