@@ -80,5 +80,5 @@ jobs:
       - name: Run tests (installed mode)
         run: |
           pip install pytest pytest-asyncio aiohttp requests
-          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/dummy_nodes" \
+          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
             python -m pytest tests/test_cli_and_discovery.py -v --tb=short
