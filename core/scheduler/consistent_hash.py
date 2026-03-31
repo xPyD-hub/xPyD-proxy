@@ -59,6 +59,14 @@ class ConsistentHashPolicy(SchedulingPolicy):
         self._workers.add(addr)
         for i in range(self._virtual_nodes):
             h = self._hash(addr, i)
+            if h in self._ring_map:
+                logger.debug(
+                    "Hash collision at vnode %s#%d (hash=%x), skipping",
+                    addr,
+                    i,
+                    h,
+                )
+                continue
             self._ring_map[h] = addr
             insort(self._ring_keys, h)
 
@@ -122,6 +130,20 @@ class ConsistentHashPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        *,
+        header: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user: Optional[str] = None,
+        client_ip: Optional[str] = None,
     ) -> Optional[str]:
-        """Fallback schedule method — delegates to select with no key."""
-        return self.select()
+        """Schedule using request context for consistent hashing.
+
+        Key priority: header (X-Session-ID) > user > client_ip > session_id.
+        Falls back to ``"__default__"`` only when no context is provided.
+        """
+        return self.select(
+            header=header,
+            session_id=session_id,
+            user=user,
+            client_ip=client_ip,
+        )
