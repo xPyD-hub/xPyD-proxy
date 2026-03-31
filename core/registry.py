@@ -64,10 +64,20 @@ class InstanceRegistry:
     def __init__(
         self,
         clock: Optional[Callable[[], float]] = None,
+        cb_enabled: bool = False,
+        failure_threshold: int = 5,
+        success_threshold: int = 2,
+        timeout_duration_seconds: float = 30,
+        window_duration_seconds: float = 60,
     ) -> None:
         self._lock = threading.RLock()
         self._instances: Dict[str, _InstanceRecord] = {}
         self._clock = clock
+        self._cb_enabled = cb_enabled
+        self._cb_failure_threshold = failure_threshold
+        self._cb_success_threshold = success_threshold
+        self._cb_timeout_duration_seconds = timeout_duration_seconds
+        self._cb_window_duration_seconds = window_duration_seconds
 
     def add(self, role: str, address: str) -> None:
         """Register an instance with the given role and address.
@@ -88,7 +98,13 @@ class InstanceRegistry:
             self._instances[address] = _InstanceRecord(
                 address=address,
                 role=role,
-                circuit_breaker=CircuitBreaker(clock=self._clock),
+                circuit_breaker=CircuitBreaker(
+                    failure_threshold=self._cb_failure_threshold,
+                    success_threshold=self._cb_success_threshold,
+                    timeout_duration_seconds=self._cb_timeout_duration_seconds,
+                    window_duration_seconds=self._cb_window_duration_seconds,
+                    clock=self._clock,
+                ),
             )
 
     def remove(self, address: str) -> None:
@@ -117,13 +133,19 @@ class InstanceRegistry:
             circuit-breaker probe mechanism and excluded here.
         """
         with self._lock:
-            return [
-                instance.address
-                for instance in self._instances.values()
-                if instance.role == role
-                and instance.status == InstanceStatus.HEALTHY
-                and instance.circuit_breaker.state == CircuitBreakerState.CLOSED
-            ]
+            results = []
+            for instance in self._instances.values():
+                if instance.role != role:
+                    continue
+                if instance.status != InstanceStatus.HEALTHY:
+                    continue
+                if (
+                    self._cb_enabled
+                    and instance.circuit_breaker.state != CircuitBreakerState.CLOSED
+                ):
+                    continue
+                results.append(instance.address)
+            return results
 
     def mark_healthy(self, address: str) -> None:
         """Mark an instance as healthy (called by health monitor).
