@@ -34,6 +34,14 @@ Reviews must be performed to the **strictest standard**. Every line of changed
 code must be examined. Do not approve unless you are confident the code is
 correct.
 
+**Design conformance is mandatory.** Before reviewing any PR, pull the latest
+`main` and read `tasklist_openclaw.md` to understand the current task design.
+Verify that the implementation matches the spec (YAML schema, API contract,
+directory structure, etc.). If the code deviates from the design in
+`tasklist_openclaw.md`, submit `REQUEST_CHANGES` — even if the code itself is
+technically correct. An implementation that doesn't match the agreed design is
+wrong.
+
 ### Review Checklist
 
 For each non-draft PR with a new commit:
@@ -187,6 +195,11 @@ run.
 
 ## General
 
+- **Always fetch latest before acting** — `BOT_POLICY.md` and
+  `tasklist_openclaw.md` are living documents that change frequently. Before
+  starting any work (review, authoring, or maintenance), **pull the latest
+  `main`** and re-read both files. Never rely on a cached or local copy.
+  Implementing against an outdated design or policy is considered a bug.
 - **English only** — all content on GitHub must be in English. This includes
   code, comments, commit messages, PR titles/descriptions, review comments,
   and inline annotations. No Chinese characters allowed anywhere in the repo
