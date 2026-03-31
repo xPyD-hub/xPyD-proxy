@@ -602,7 +602,7 @@ def test_retry_routes_to_different_node():
 ## Task 8 (IN PROGRESS)
 
 ### Goal
-Package the proxy as an installable CLI tool (`pdproxy`) with startup node discovery.
+Package the proxy as an installable CLI tool (`xpyd`) with startup node discovery.
 
 ### Scope
 
@@ -610,19 +610,19 @@ Package the proxy as an installable CLI tool (`pdproxy`) with startup node disco
 - Add `pyproject.toml` (or `setup.py`) with `console_scripts` entry point:
   ```
   [project.scripts]
-  pdproxy = "core.MicroPDProxyServer:main"
+  xpyd = "core.MicroPDProxyServer:main"
   ```
 - Install via `pip install .` (or `pip install -e .` for dev)
-- After install, `pdproxy` command is available system-wide
+- After install, `xpyd` command is available system-wide
 
 #### 8b: CLI interface
-- `pdproxy --config proxy.yaml` or `pdproxy -c proxy.yaml` — start with YAML config
-- `PDPROXY_CONFIG=proxy.yaml pdproxy` — environment variable alternative
-- Default: search for `./pdproxy.yaml` in current directory if no config specified
-- Precedence: `--config` > `PDPROXY_CONFIG` env var > `./pdproxy.yaml`
-- `pdproxy --help` — show all available options
-- `pdproxy --version` — show version
-- `pdproxy --validate-config proxy.yaml` — validate YAML without starting server
+- `xpyd --config proxy.yaml` or `xpyd -c proxy.yaml` — start with YAML config
+- `XPYD_CONFIG=proxy.yaml xpyd` — environment variable alternative
+- Default: search for `./xpyd.yaml` in current directory if no config specified
+- Precedence: `--config` > `XPYD_CONFIG` env var > `./xpyd.yaml`
+- `xpyd --help` — show all available options
+- `xpyd --version` — show version
+- `xpyd --validate-config proxy.yaml` — validate YAML without starting server
 - Existing CLI arguments (`--model`, `--prefill`, `--decode`, etc.) continue to work for backward compatibility
 
 #### 8c: Startup node discovery
@@ -652,7 +652,7 @@ startup:
 - UT for `--validate-config`
 - UT for startup discovery: mock nodes coming online gradually, verify 503 → 200 transition
 - UT for timeout: no nodes available → exit after timeout
-- Integration test: `pdproxy -c test.yaml` starts and serves requests
+- Integration test: `xpyd -c test.yaml` starts and serves requests
 - CI green
 
 ---

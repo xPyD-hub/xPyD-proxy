@@ -251,5 +251,5 @@ with a descriptive error message. The following rules are enforced:
 | `startup.wait_timeout_seconds` must be a positive integer | `"startup.wait_timeout_seconds" must be a positive integer` |
 | `startup.probe_interval_seconds` must be a positive integer | `"startup.probe_interval_seconds" must be a positive integer` |
 
-Use `pdproxy --validate-config proxy.yaml` to check a config file without
+Use `xpyd --validate-config proxy.yaml` to check a config file without
 starting the server.
