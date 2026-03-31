@@ -244,6 +244,153 @@ health_check:
 - Circuit breaker, retry, and health check are independent — each can be enabled separately
 - Startup node discovery from Task 8 should integrate with the Node Registry
 
+### CI Testing Strategy
+
+All Task 9 features must be verifiable in CI without external dependencies.
+Tests are split into two tiers:
+
+#### Tier 1: Unit Tests (fast, isolated, mock-based)
+
+Run in milliseconds. Test component logic in isolation.
+
+**Node Registry:**
+```python
+def test_mark_unhealthy_removes_from_available():
+    registry = NodeRegistry()
+    registry.add("decode", "10.0.0.1:8200")
+    registry.add("decode", "10.0.0.2:8200")
+    registry.mark_unhealthy("10.0.0.1:8200")
+    assert registry.get_available("decode") == ["10.0.0.2:8200"]
+
+def test_mark_healthy_restores():
+    registry.mark_healthy("10.0.0.1:8200")
+    assert "10.0.0.1:8200" in registry.get_available("decode")
+```
+
+**Circuit Breaker:**
+```python
+def test_opens_after_failure_threshold():
+    cb = CircuitBreaker(failure_threshold=3)
+    for _ in range(3):
+        cb.record_failure()
+    assert cb.state == "open"
+
+def test_half_open_after_timeout(mock_time):
+    cb = CircuitBreaker(failure_threshold=3, timeout_seconds=30)
+    for _ in range(3):
+        cb.record_failure()
+    mock_time.advance(31)  # use freezegun or manual clock
+    assert cb.state == "half_open"
+
+def test_closes_after_success_threshold():
+    # ... already in half_open state
+    for _ in range(2):  # success_threshold=2
+        cb.record_success()
+    assert cb.state == "closed"
+```
+
+**Retry with Backoff:**
+```python
+def test_retries_on_502(mock_http):
+    mock_http.side_effect = [
+        Response(502),  # attempt 0 — fail
+        Response(502),  # attempt 1 — fail
+        Response(200),  # attempt 2 — success
+    ]
+    result = retry_request(mock_http, max_retries=2)
+    assert result.status_code == 200
+    assert mock_http.call_count == 3
+
+def test_no_retry_on_400(mock_http):
+    mock_http.return_value = Response(400)
+    result = retry_request(mock_http, max_retries=2)
+    assert result.status_code == 400
+    assert mock_http.call_count == 1  # no retry
+
+def test_backoff_timing():
+    delays = compute_backoff_delays(
+        max_retries=3, initial_ms=100, multiplier=2.0, jitter=0.0
+    )
+    assert delays == [100, 200, 400]
+```
+
+**Health Monitor:**
+```python
+@pytest.mark.asyncio
+async def test_detects_unhealthy_node(mock_aiohttp):
+    mock_aiohttp.get("http://10.0.0.1:8200/health", status=200)
+    mock_aiohttp.get("http://10.0.0.2:8200/health", exception=TimeoutError)
+    monitor = HealthMonitor(registry, interval=1, timeout=1)
+    await monitor.check_once()
+    assert registry.get_status("10.0.0.1:8200") == "healthy"
+    assert registry.get_status("10.0.0.2:8200") == "unhealthy"
+```
+
+#### Tier 2: Integration Tests (real processes, <30s total)
+
+Use real dummy nodes and proxy (like `test_proxy_matrix.py`).
+Use aggressive config to keep CI fast:
+
+```python
+TEST_CONFIG = {
+    "circuit_breaker": {
+        "enabled": True,
+        "failure_threshold": 2,        # open fast
+        "success_threshold": 1,        # close fast
+        "timeout_duration_seconds": 2,  # short wait
+    },
+    "retry": {
+        "enabled": True,
+        "max_retries": 1,
+        "initial_backoff_ms": 10,      # near-instant
+    },
+    "health_check": {
+        "enabled": True,
+        "interval_seconds": 1,         # check every 1s
+        "timeout_seconds": 1,
+    },
+}
+```
+
+**Scenario: Node failure → circuit open → recovery → circuit close**
+```python
+def test_circuit_breaker_end_to_end():
+    # 1. Start proxy + 2 decode dummy nodes
+    # 2. Send request → 200 OK (both nodes healthy)
+    # 3. Kill decode node 1
+    # 4. Wait for health check to detect (~2s)
+    # 5. Send requests → all routed to node 2 (circuit open on node 1)
+    # 6. GET /status → verify node 1 circuit="open"
+    # 7. Restart decode node 1
+    # 8. Wait for circuit half-open → probe → close (~4s)
+    # 9. Send requests → balanced across both nodes again
+    # Total: ~10s
+```
+
+**Scenario: Retry failover to different node**
+```python
+def test_retry_routes_to_different_node():
+    # 1. Start proxy + 2 decode nodes
+    # 2. Make node 1 return 502 (modify dummy node behavior)
+    # 3. Send request → proxy retries on node 2 → 200 OK
+    # 4. Verify proxy logs show retry attempt
+    # 5. Verify metrics: proxy_retry_total incremented
+```
+
+#### Testing Guidelines for Implementers and Reviewers
+
+1. **Mock time, not sleep.** Use `freezegun` or manual clock injection for
+   circuit breaker timeouts. Never use `time.sleep()` in unit tests.
+2. **Use `aioresponses`** for async HTTP mocking in health monitor tests.
+3. **Keep integration tests under 30 seconds total.** Use the `TEST_CONFIG`
+   above with aggressive timeouts.
+4. **Every state transition must have a test.** Circuit breaker has 5
+   transitions — test all 5. Do not skip half-open → open (probe failure).
+5. **Test concurrency.** Node Registry will be accessed from multiple async
+   tasks. Add a test with concurrent read/write operations.
+6. **Reviewers:** verify that every code path described above has a
+   corresponding test. Reject PRs that add features without matching tests.
+
 ### Future (not in this task)
 - K8s service discovery
 - Separate metrics port
