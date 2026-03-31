@@ -101,12 +101,12 @@ class TestGetAvailableNodes:
         reg.set_circuit_breaker_state("10.0.0.1:8200", CircuitBreakerState.OPEN)
         assert reg.get_available_nodes("decode") == []
 
-    def test_half_open_circuit_breaker_included(self) -> None:
+    def test_half_open_circuit_breaker_excluded(self) -> None:
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
         reg.mark_healthy("10.0.0.1:8200")
         reg.set_circuit_breaker_state("10.0.0.1:8200", CircuitBreakerState.HALF_OPEN)
-        assert reg.get_available_nodes("decode") == ["10.0.0.1:8200"]
+        assert reg.get_available_nodes("decode") == []
 
     def test_role_filtering(self) -> None:
         reg = InstanceRegistry()

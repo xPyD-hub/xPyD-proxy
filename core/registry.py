@@ -93,8 +93,9 @@ class InstanceRegistry:
             role: Filter by role ("prefill" or "decode").
 
         Returns:
-            List of node addresses that are healthy and have closed
-            (or half-open) circuit breakers.
+            List of node addresses that are healthy and have a closed
+            circuit breaker.  HALF_OPEN nodes are reserved for the
+            circuit-breaker probe mechanism and excluded here.
         """
         with self._lock:
             return [
@@ -102,8 +103,7 @@ class InstanceRegistry:
                 for node in self._nodes.values()
                 if node.role == role
                 and node.status == InstanceStatus.HEALTHY
-                and node.circuit_breaker_state
-                in (CircuitBreakerState.CLOSED, CircuitBreakerState.HALF_OPEN)
+                and node.circuit_breaker_state == CircuitBreakerState.CLOSED
             ]
 
     def mark_healthy(self, address: str) -> None:
