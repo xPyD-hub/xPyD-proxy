@@ -5,7 +5,7 @@ MicroPDProxyServer – a lightweight PD (Prefill-Decode) proxy implementation.
 This project provides **dummy prefill and decode nodes** for local development
 and debugging of a PD-separated proxy without any GPU or model dependencies.
 
-The dummy nodes now expose the minimum compatibility surface required by the
+The dummy nodes expose the minimum compatibility surface required by the
 validated proxy implementation under `core/`, including:
 
 - `/v1/models`
@@ -13,6 +13,7 @@ validated proxy implementation under `core/`, including:
 - `/v1/chat/completions`
 - `/health`
 - `/ping`
+- `/metrics` (Prometheus format)
 
 ## Architecture
 
@@ -40,34 +41,104 @@ uvicorn dummy_nodes.decode_node:app --host 0.0.0.0 --port 8200
 
 ## Usage
 
-Useful docs:
+### Option 1: YAML Configuration (recommended)
 
-- `docs/xpyd_start_proxy_usage.md` — parameterized script usage and topology rules
-- `docs/one_click_dummy_proxy_setup.md` — end-to-end local dummy + proxy setup guide
-- `docs/terminal_by_terminal_quickstart.md` — copy-paste terminal-by-terminal local setup
+Create a YAML config file (see [`examples/proxy.yaml`](examples/proxy.yaml)):
 
-Both nodes expose OpenAI-compatible completion/chat-completion endpoints:
+```yaml
+model: /path/to/model
+port: 8868
+
+prefill:
+  nodes:
+    - "10.0.0.1:8100"
+    - "10.0.0.2:8100"
+  tp_size: 8
+  dp_size: 2
+  world_size_per_node: 8
+
+decode:
+  nodes:
+    - "10.0.0.3:8200"
+    - "10.0.0.4:8200"
+  tp_size: 1
+  dp_size: 16
+  world_size_per_node: 8
+
+scheduling: loadbalanced
+```
+
+Start the proxy:
 
 ```bash
-# Non-streaming request
-curl http://localhost:8100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dummy",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "max_tokens": 10
-  }'
-
-# Streaming request
-curl http://localhost:8200/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "dummy",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "max_tokens": 10,
-    "stream": true
-  }'
+python core/MicroPDProxyServer.py --config proxy.yaml
 ```
+
+The topology parameters expand into instance addresses automatically:
+- **Prefill**: 2 nodes × (8 / 8) = 1 instance/node = 2 instances
+- **Decode**: 2 nodes × (8 / 1) = 8 instances/node = 16 instances
+
+A simple flat-list format is also supported (see [`examples/proxy-simple.yaml`](examples/proxy-simple.yaml)):
+
+```yaml
+model: /path/to/model
+prefill:
+  - "10.0.0.1:8100"
+decode:
+  - "10.0.0.2:8200"
+  - "10.0.0.3:8200"
+```
+
+### Option 2: CLI Arguments
+
+```bash
+python core/MicroPDProxyServer.py \
+  --model /path/to/model \
+  --prefill 10.0.0.1:8100 10.0.0.2:8100 \
+  --decode 10.0.0.3:8200 10.0.0.4:8200 \
+  --port 8868 \
+  --roundrobin
+```
+
+### Option 3: Parameterized Shell Script
+
+For topology-driven deployments with TP/DP parameters:
+
+```bash
+bash core/xpyd_start_proxy.sh \
+  --model /path/to/model \
+  --prefill-nodes 2 --prefill-tp-size 8 --prefill-dp-size 2 --prefill-world-size-per-node 8 \
+  --decode-nodes 2 --decode-tp-size 1 --decode-dp-size 16 --decode-world-size-per-node 8 \
+  --prefill-base-port 8100 --decode-base-port 8200
+```
+
+### CLI Arguments Reference
+
+| Argument | Short | Default | Description |
+|---|---|---|---|
+| `--config` | `-c` | — | Path to YAML configuration file |
+| `--model` | `-m` | — | Model name / path (required unless in YAML) |
+| `--prefill` | `-p` | — | Prefill node URLs (host:port) |
+| `--decode` | `-d` | — | Decode node URLs (host:port) |
+| `--port` | — | 8000 | Proxy listen port |
+| `--roundrobin` | — | false | Use round-robin scheduling |
+| `--generator_on_p_node` | — | false | Generate first token on prefill node |
+
+When both `--config` and CLI arguments are provided, CLI arguments take precedence.
+
+### YAML Config Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `model` | string | — | Model name / path (required) |
+| `port` | int | 8000 | Proxy listen port |
+| `log_level` | string | warning | Log level: debug, info, warning, error |
+| `prefill` | list or topology | [] | Prefill node config |
+| `decode` | list or topology | — | Decode node config (required) |
+| `scheduling` | string | loadbalanced | Scheduling policy: roundrobin, loadbalanced |
+| `generator_on_p_node` | bool | false | Generate first token on prefill node |
+| `admin_api_key` | string | — | Admin API key (env `ADMIN_API_KEY` overrides) |
+| `openai_api_key` | string | — | OpenAI API key (env `OPENAI_API_KEY` overrides) |
 
 ## Docker Deployment
 
@@ -91,8 +162,6 @@ See [`docs/deployment.md`](docs/deployment.md) for production deployment details
 Use vLLM's benchmark tool to test proxy throughput:
 
 ```bash
-python -m vllm.entrypoints.openai.api_server  # start backend nodes first
-
 python -m vllm bench serve \
   --base-url http://localhost:8868 \
   --model DeepSeek-R1 \
@@ -109,27 +178,26 @@ python -m vllm bench serve \
 |---|---|---|
 | `PREFILL_DELAY_PER_TOKEN` | `0.001` | Simulated per-prompt-token prefill latency (seconds) |
 | `DECODE_DELAY_PER_TOKEN` | `0.01` | Simulated per-decode-token generation latency (seconds) |
+| `ADMIN_API_KEY` | — | API key for admin endpoints (overrides YAML) |
+| `OPENAI_API_KEY` | — | Bearer token for backend nodes (overrides YAML) |
 
 ## Running Tests
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v
-python -m pytest tests/test_proxy_matrix.py -v
+
+# Run the full test suite
+PYTHONPATH=core:tests python -m pytest tests/ -v
+
+# Run specific test groups
+PYTHONPATH=core:tests python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v  # Node tests
+PYTHONPATH=core:tests python -m pytest tests/test_proxy_matrix.py -v                            # Topology matrix
+PYTHONPATH=core:tests python -m pytest tests/test_yaml_integration.py -v                        # YAML config integration
+PYTHONPATH=core:tests python -m pytest tests/test_config.py tests/test_yaml_config.py -v        # Config validation
+PYTHONPATH=core:tests python -m pytest tests/test_topology.py -v                                # Topology expansion
+PYTHONPATH=core:tests python -m pytest tests/test_scheduler.py -v                               # Scheduler unit tests
+PYTHONPATH=core:tests python -m pytest tests/test_metrics.py -v                                 # Prometheus metrics
 ```
-
-The matrix test validates the task combinations below against the real
-`core/MicroPDProxyServer.py` implementation (without changing the core business
-logic):
-
-- `1 2 1`
-- `2 2 1`
-- `1 2 2`
-- `1 2 4`
-- `1 2 8`
-- `2 2 2`
-- `2 4 1`
-- `2 4 2`
 
 ## Documentation
 
