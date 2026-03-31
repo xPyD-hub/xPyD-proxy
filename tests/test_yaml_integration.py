@@ -3,26 +3,51 @@
 from __future__ import annotations
 
 import argparse
+import socket
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
+import uvicorn
 from config import ProxyConfig
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 from MicroPDProxyServer import Proxy, RoundRobinSchedulingPolicy
 
+from dummy_nodes.decode_node import app as decode_app
+from dummy_nodes.prefill_node import app as prefill_app
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
 
 
-@pytest.fixture
-def _ports():
-    """Get the dummy node ports from conftest (already running)."""
-    import conftest
+def _free_port():
+    with socket.socket() as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
-    return conftest._PREFILL_PORT, conftest._DECODE_PORT
+
+# Start dedicated dummy nodes for YAML integration tests.
+_YAML_PREFILL_PORT = _free_port()
+_YAML_DECODE_PORT = _free_port()
+
+
+def _run_server(app, port):
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    uvicorn.Server(config).run()
+
+
+threading.Thread(
+    target=_run_server, args=(prefill_app, _YAML_PREFILL_PORT), daemon=True
+).start()
+threading.Thread(
+    target=_run_server, args=(decode_app, _YAML_DECODE_PORT), daemon=True
+).start()
+time.sleep(2)
 
 
 def _make_proxy_from_yaml(yaml_content: str, tmp_path: Path) -> Proxy:
@@ -70,15 +95,14 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def yaml_client(tmp_path, _ports):
+async def yaml_client(tmp_path):
     """Async HTTP client wired to a proxy started from YAML config."""
-    prefill_port, decode_port = _ports
     yaml_content = f"""\
     model: {_TOKENIZER_PATH}
     prefill:
-      - "127.0.0.1:{prefill_port}"
+      - "127.0.0.1:{_YAML_PREFILL_PORT}"
     decode:
-      - "127.0.0.1:{decode_port}"
+      - "127.0.0.1:{_YAML_DECODE_PORT}"
     scheduling: roundrobin
     """
     proxy = _make_proxy_from_yaml(yaml_content, tmp_path)
@@ -89,20 +113,19 @@ async def yaml_client(tmp_path, _ports):
 
 
 @pytest.fixture
-async def yaml_topology_client(tmp_path, _ports):
+async def yaml_topology_client(tmp_path):
     """Client from YAML config using topology-style node definition."""
-    prefill_port, decode_port = _ports
     yaml_content = f"""\
     model: {_TOKENIZER_PATH}
     prefill:
       nodes:
-        - "127.0.0.1:{prefill_port}"
+        - "127.0.0.1:{_YAML_PREFILL_PORT}"
       tp_size: 1
       dp_size: 1
       world_size_per_node: 1
     decode:
       nodes:
-        - "127.0.0.1:{decode_port}"
+        - "127.0.0.1:{_YAML_DECODE_PORT}"
       tp_size: 1
       dp_size: 1
       world_size_per_node: 1
