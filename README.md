@@ -37,7 +37,7 @@ pip install .
 pip install -e .
 
 # Start with a YAML config
-pdproxy --config examples/proxy.yaml
+xpyd --config examples/proxy.yaml
 
 # Or use the traditional way
 pip install -r requirements.txt
@@ -47,15 +47,15 @@ python core/MicroPDProxyServer.py --config examples/proxy.yaml
 ## Installation
 
 ```bash
-# Install the pdproxy CLI
+# Install the xpyd CLI
 pip install .
 
 # Verify
-pdproxy --version
-pdproxy --help
+xpyd --version
+xpyd --help
 
 # Validate a config without starting the server
-pdproxy --validate-config examples/proxy.yaml
+xpyd --validate-config examples/proxy.yaml
 ```
 
 ## Usage
@@ -90,15 +90,15 @@ scheduling: loadbalanced
 Start the proxy:
 
 ```bash
-pdproxy --config proxy.yaml
+xpyd --config proxy.yaml
 # or
 python core/MicroPDProxyServer.py --config proxy.yaml
 ```
 
 The proxy also searches for config in this order:
 1. `--config` / `-c` CLI argument
-2. `PDPROXY_CONFIG` environment variable
-3. `./pdproxy.yaml` in the current directory
+2. `XPYD_CONFIG` environment variable
+3. `./xpyd.yaml` in the current directory
 
 ### Startup Node Discovery
 
@@ -188,8 +188,8 @@ When both `--config` and CLI arguments are provided, CLI arguments take preceden
 docker compose up --build
 
 # Or run just the proxy against existing GPU nodes
-docker build -t micropdproxy .
-docker run -p 8868:8868 micropdproxy \
+docker build -t microxpyd .
+docker run -p 8868:8868 microxpyd \
   python3 core/MicroPDProxyServer.py \
   --model tokenizers/DeepSeek-R1 \
   --prefill 10.0.0.1:8100 --decode 10.0.0.3:8200 \
@@ -247,7 +247,7 @@ PYTHONPATH=core:tests python -m pytest tests/test_metrics.py -v                 
 | [Architecture](docs/architecture.md) | System architecture overview |
 | [API Reference](docs/api_reference.md) | HTTP API endpoints |
 | [Configuration](docs/configuration.md) | YAML config file reference |
-| [CLI](docs/cli.md) | pdproxy command-line tool (planned) |
+| [CLI](docs/cli.md) | xpyd command-line tool (planned) |
 | [Scheduling](docs/scheduling.md) | Load balancing strategies |
 | [Resilience](docs/resilience.md) | Health checks, circuit breakers, retry (planned) |
 | [Metrics](docs/metrics.md) | Prometheus metrics endpoint |

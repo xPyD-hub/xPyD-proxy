@@ -1,7 +1,7 @@
 # MicroPDProxy Configuration Example
 #
 # Usage:
-#   pdproxy --config examples/proxy.yaml
+#   xpyd --config examples/proxy.yaml
 #   # or
 #   python core/MicroPDProxyServer.py --config examples/proxy.yaml
 #

@@ -961,7 +961,7 @@ _VERSION = "0.1.0"
 def _build_parser():
     """Build the argument parser for the proxy CLI."""
     parser = argparse.ArgumentParser(
-        prog="pdproxy",
+        prog="xpyd",
         description="MicroPDProxy — lightweight PD proxy server",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_VERSION}")
@@ -1026,20 +1026,20 @@ def _build_parser():
 
 
 def _resolve_config_path(args):
-    """Resolve the config file path: --config > PDPROXY_CONFIG env > ./pdproxy.yaml."""
+    """Resolve the config file path: --config > XPYD_CONFIG env > ./xpyd.yaml."""
     if args.config:
         return args.config
-    env_config = os.environ.get("PDPROXY_CONFIG")
+    env_config = os.environ.get("XPYD_CONFIG")
     if env_config:
         return env_config
-    default_path = os.path.join(os.getcwd(), "pdproxy.yaml")
+    default_path = os.path.join(os.getcwd(), "xpyd.yaml")
     if os.path.exists(default_path):
         return default_path
     return None
 
 
 def main():
-    """Entry point for the ``pdproxy`` CLI."""
+    """Entry point for the ``xpyd`` CLI."""
     parser = _build_parser()
     args = parser.parse_args()
 
