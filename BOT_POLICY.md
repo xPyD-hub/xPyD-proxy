@@ -23,7 +23,16 @@ token for reviews.** The author's token is for authoring PRs only.
 1. **Skip draft PRs** — do not review, comment, or interact with them.
 2. **Skip already-reviewed commits** — if the PR head SHA has not changed since
    your last review, do not submit a duplicate review.
-3. **One review per PR per commit SHA** — never submit multiple reviews for the
+3. **Re-requested reviews take priority** — if a reviewer is explicitly
+   re-requested (via GitHub's "re-request review" feature), always perform
+   a fresh review even if the commit SHA has not changed. A re-request means
+   something was fixed or needs re-evaluation.
+4. **Only skip APPROVED commits** — a commit SHA is considered "reviewed" only
+   if you submitted `APPROVE` on it. If you previously submitted `COMMENT`
+   (e.g. because CI was still running), that does NOT count as reviewed.
+   You must re-review when CI completes and submit `APPROVE` or
+   `REQUEST_CHANGES`.
+5. **One review per PR per commit SHA** — never submit multiple reviews for the
    same commit. If you submitted `CHANGES_REQUESTED` on a commit, do **not**
    submit `APPROVE` on the same commit — wait for the author to push a new
    commit that addresses the feedback, then re-review the new commit.

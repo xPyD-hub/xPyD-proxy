@@ -18,7 +18,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    field_validator,
+    model_validator,
+)
+
+
+class CircuitBreakerConfig(BaseModel):
+    """Configuration for the per-instance circuit breaker."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    failure_threshold: int = 5
+    success_threshold: int = 2
+    timeout_duration_seconds: int = 30
+    window_duration_seconds: int = 60
 
 try:
     from .topology import expand_topology
@@ -42,6 +59,7 @@ class ProxyConfig(BaseModel):
     openai_api_key: Optional[str] = None
     wait_timeout_seconds: int = 600
     probe_interval_seconds: int = 10
+    circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
 
     # ------------------------------------------------------------------
     # Validators
@@ -227,6 +245,7 @@ class ProxyConfig(BaseModel):
         scheduling = yaml_data.pop("scheduling", None)
         admin_api_key_yaml = yaml_data.pop("admin_api_key", None)
         openai_api_key_yaml = yaml_data.pop("openai_api_key", None)
+        circuit_breaker_yaml = yaml_data.pop("circuit_breaker", None)
 
         # 3. Reject unknown YAML keys early
         known_fields = set(_arg_defaults.keys())
@@ -271,5 +290,11 @@ class ProxyConfig(BaseModel):
             merged.setdefault("admin_api_key", admin_key)
         if openai_key is not None:
             merged.setdefault("openai_api_key", openai_key)
+
+        # 7. Circuit breaker config (YAML only, no CLI override)
+        if circuit_breaker_yaml is not None:
+            merged["circuit_breaker"] = CircuitBreakerConfig(
+                **circuit_breaker_yaml
+            )
 
         return cls(**merged)
