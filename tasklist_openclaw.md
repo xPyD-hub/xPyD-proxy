@@ -20,30 +20,92 @@ The system uses a shell script `xpyd_start_proxy.sh` to configure and launch a d
 ## Task 9 (PLANNED)
 
 ### Goal
-Improve proxy resilience with health monitoring and failover.
+Improve proxy resilience with circuit breakers, retry with backoff, health monitoring, and a unified worker registry. Inspired by [vllm-project/router](https://github.com/vllm-project/router).
 
 ### Scope
 
-#### 9a: Backend health monitor
-- Periodically ping all prefill/decode backend nodes (e.g. every 10s)
-- Automatically remove unhealthy nodes from the active pool
-- Re-add nodes when they recover
-- Expose health status in `/status` endpoint
+#### 9a: Worker Registry
+- Introduce a `WorkerRegistry` that tracks the state of every prefill/decode node in one place:
+  - Health status (healthy / unhealthy / unknown)
+  - Circuit breaker state (closed / open / half-open)
+  - Last health check timestamp
+  - Active request count
+- All scheduling decisions read from the registry
+- Node add/remove operations go through the registry
 
-#### 9b: Request failover
-- When a request to a backend node fails (connection error, timeout), automatically retry on the next available node
-- Configurable retry count and timeout
-- Do not retry on client errors (4xx)
+#### 9b: Circuit Breaker
+- Implement per-node circuit breaker (state machine):
+  - **Closed** → normal operation; forward requests
+  - **Open** → after `failure_threshold` consecutive failures; stop forwarding, return 503
+  - **Half-Open** → after `timeout_duration_seconds`; allow one probe request
+  - Half-Open success × `success_threshold` → **Closed**
+  - Half-Open failure → back to **Open**
+- YAML config:
+  ```yaml
+  circuit_breaker:
+    enabled: false                  # default: false
+    failure_threshold: 5            # consecutive failures to open
+    success_threshold: 2            # consecutive successes to close
+    timeout_duration_seconds: 30    # open → half-open wait
+    window_duration_seconds: 60     # sliding window for failure count
+  ```
+
+#### 9c: Retry with Exponential Backoff + Jitter
+- On request failure (connection error, timeout, 5xx), retry on a different node
+- Exponential backoff: `initial_backoff_ms * multiplier^attempt` with random jitter
+- Do NOT retry:
+  - Client errors (4xx)
+  - Requests that have already started streaming
+  - When circuit breaker is open for all available nodes
+- YAML config:
+  ```yaml
+  retry:
+    enabled: false                  # default: false
+    max_retries: 2                  # default: 2
+    initial_backoff_ms: 100         # default: 100
+    max_backoff_ms: 10000           # default: 10000
+    backoff_multiplier: 2.0         # default: 2.0
+    jitter_factor: 0.1              # default: 0.1
+    retryable_status_codes:         # default: [408, 429, 500, 502, 503, 504]
+      - 408
+      - 429
+      - 500
+      - 502
+      - 503
+      - 504
+  ```
+
+#### 9d: Health Monitor
+- Background task pings all nodes every `interval_seconds` on `/health`
+- Updates `WorkerRegistry` health status and feeds into circuit breaker
+- Nodes that recover from unhealthy → circuit breaker transitions to half-open
+- `/status` endpoint extended with per-node health + circuit breaker state
+- YAML config:
+  ```yaml
+  health_check:
+    enabled: false                  # default: false
+    interval_seconds: 10            # default: 10
+    timeout_seconds: 3              # default: 3
+  ```
 
 ### Constraints
+- All new features default to **disabled** for backward compatibility
 - Must not break existing topology matrix tests
-- All new behavior must be configurable and off by default for backward compatibility
-- Add UT for health check and failover
+- Circuit breaker, retry, and health check are independent — each can be enabled separately
+- Startup node discovery from Task 8 should integrate with the WorkerRegistry
 
 ### Testing / verification
-- Health check correctly detects and removes dead nodes
-- Failover retries on next node when backend fails
+- UT for circuit breaker state machine (all transitions)
+- UT for retry with backoff (mock failures, verify backoff timing and jitter)
+- UT for health monitor (mock healthy/unhealthy nodes)
+- UT for worker registry (add/remove/state transitions)
+- Integration test: node goes down → circuit opens → node recovers → circuit closes
 - CI green
+
+### Future (not in this task)
+- Consistent hash scheduling (session affinity for KV cache reuse)
+- K8s service discovery
+- Separate metrics port
 
 ---
 
