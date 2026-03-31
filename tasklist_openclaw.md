@@ -68,12 +68,154 @@ Add advanced load balancing strategies beyond round-robin and load-balanced. Ins
 - Must not break existing tests
 - Each policy must have comprehensive UT
 
-### Testing / verification
-- UT for consistent hash: same session → same worker, node removal → minimal redistribution
-- UT for power of two: verify load-aware selection
-- UT for cache-aware: same prefix → same worker
-- UT for policy registry: register, select, unknown policy error
-- CI green
+### CI Testing Strategy
+
+All scheduling policies are pure logic — no network, no processes, fast to test.
+
+#### Tier 1: Unit Tests (fast, mock-based)
+
+**Consistent Hash:**
+```python
+def test_same_session_same_worker():
+    policy = ConsistentHashPolicy(workers=["w1", "w2", "w3", "w4"])
+    # Same session ID → same worker every time
+    w1 = policy.select(session_id="user-abc")
+    w2 = policy.select(session_id="user-abc")
+    w3 = policy.select(session_id="user-abc")
+    assert w1 == w2 == w3
+
+def test_different_sessions_distribute():
+    policy = ConsistentHashPolicy(workers=["w1", "w2", "w3", "w4"])
+    selected = {policy.select(session_id=f"user-{i}") for i in range(100)}
+    assert len(selected) > 1  # not all on same worker
+
+def test_minimal_redistribution_on_node_removal():
+    policy = ConsistentHashPolicy(workers=["w1", "w2", "w3", "w4"])
+    before = {f"s{i}": policy.select(session_id=f"s{i}") for i in range(100)}
+    policy.remove_worker("w3")
+    after = {f"s{i}": policy.select(session_id=f"s{i}") for i in range(100)}
+    # Only sessions on w3 should move; others stay
+    moved = sum(1 for s in before if before[s] != after[s])
+    assert moved < 35  # ~25% expected (1 of 4 workers removed)
+
+def test_hash_key_priority():
+    # X-Session-ID header > user field > client IP
+    policy = ConsistentHashPolicy(workers=["w1", "w2"])
+    r1 = policy.select(header="sess-1", user=None, client_ip="1.2.3.4")
+    r2 = policy.select(header="sess-1", user="different", client_ip="5.6.7.8")
+    assert r1 == r2  # header takes priority
+```
+
+**Power of Two Choices:**
+```python
+def test_picks_least_loaded():
+    policy = PowerOfTwoPolicy(workers=["w1", "w2", "w3"])
+    # w1 has 10 active, w2 has 2 active, w3 has 5 active
+    policy.set_load("w1", 10)
+    policy.set_load("w2", 2)
+    policy.set_load("w3", 5)
+    # Run 100 selections — w2 should be picked most often
+    counts = Counter(policy.select() for _ in range(1000))
+    assert counts["w2"] > counts["w1"]
+
+def test_random_pair_selection():
+    policy = PowerOfTwoPolicy(workers=["w1", "w2", "w3", "w4"])
+    # All equal load → should distribute roughly evenly
+    pairs_seen = set()
+    for _ in range(1000):
+        policy.select()  # track which pairs are compared
+        pairs_seen.add(tuple(sorted(policy.last_pair)))
+    assert len(pairs_seen) > 1  # multiple pairs used
+```
+
+**Cache-Aware:**
+```python
+def test_same_prefix_same_worker():
+    policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
+    # Same prompt prefix → same worker
+    prompt = "The quick brown fox " * 50  # >256 tokens
+    w1 = policy.select(prompt=prompt)
+    w2 = policy.select(prompt=prompt + "jumps over the lazy dog")
+    assert w1 == w2  # same prefix → same worker
+
+def test_different_prefix_can_differ():
+    policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
+    selected = set()
+    for i in range(50):
+        w = policy.select(prompt=f"Unique prompt {i} " * 100)
+        selected.add(w)
+    assert len(selected) > 1  # different prefixes spread across workers
+```
+
+**Policy Registry:**
+```python
+def test_register_and_select():
+    registry = PolicyRegistry()
+    registry.register("my_policy", MyCustomPolicy)
+    policy = registry.create("my_policy", workers=["w1", "w2"])
+    assert isinstance(policy, MyCustomPolicy)
+
+def test_unknown_policy_raises():
+    registry = PolicyRegistry()
+    with pytest.raises(ValueError, match="Unknown scheduling policy"):
+        registry.create("nonexistent", workers=["w1"])
+
+def test_builtin_policies_registered():
+    registry = PolicyRegistry()
+    for name in ["roundrobin", "loadbalanced", "consistent_hash",
+                  "power_of_two", "cache_aware"]:
+        assert registry.has(name)
+```
+
+#### Tier 2: Integration Tests (real proxy, <30s)
+
+```python
+TEST_YAML = """
+model: {tokenizer_path}
+scheduling: consistent_hash
+decode:
+  - "127.0.0.1:{port1}"
+  - "127.0.0.1:{port2}"
+consistent_hash:
+  header: "X-Session-ID"
+"""
+
+def test_consistent_hash_end_to_end():
+    # 1. Start proxy + 2 decode dummy nodes with config above
+    # 2. Send 10 requests with X-Session-ID: "session-A"
+    #    → all should hit the same decode node
+    # 3. Send 10 requests with X-Session-ID: "session-B"
+    #    → all should hit the same decode node (may differ from A)
+    # 4. Verify via proxy logs or /status which node handled which session
+
+def test_power_of_two_prefers_less_loaded():
+    # 1. Start proxy + 2 decode nodes
+    # 2. Send 5 slow requests to make one node busy
+    # 3. Send 1 fast request → should go to the less loaded node
+    # 4. Verify via response timing or logs
+
+def test_policy_selectable_via_yaml():
+    # Test each scheduling value starts the proxy correctly:
+    for policy in ["roundrobin", "loadbalanced", "consistent_hash",
+                    "power_of_two", "cache_aware"]:
+        # Start proxy with scheduling: {policy} → no startup error
+        # Send one request → 200 OK
+```
+
+#### Testing Guidelines for Implementers and Reviewers
+
+1. **Deterministic tests.** For consistent hash and cache-aware, use fixed
+   inputs and verify exact worker assignment. Do not rely on random behavior.
+2. **Statistical tests for random policies.** Power of two uses randomness —
+   use large sample sizes (1000+) and verify distribution properties, not
+   exact values.
+3. **Test with 1 worker.** All policies must handle the degenerate case of
+   a single available worker without error.
+4. **Test with 0 workers.** All policies must raise a clear error or return
+   None when no workers are available.
+5. **Reviewers:** verify that each policy has tests for: normal operation,
+   edge cases (1 worker, 0 workers), and the configuration path (YAML →
+   policy selection).
 
 ---
 
