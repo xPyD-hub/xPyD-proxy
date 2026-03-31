@@ -149,6 +149,11 @@ class TestRegistry:
         registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
         registry.add("decode", f"127.0.0.1:{_DECODE_PORT_2}")
 
+        # New instances default to UNKNOWN — mark healthy first.
+        registry.mark_healthy(f"127.0.0.1:{_PREFILL_PORT}")
+        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_1}")
+        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_2}")
+
         prefill = registry.get_available_instances("prefill")
         decode = registry.get_available_instances("decode")
         assert len(prefill) == 1
@@ -160,6 +165,8 @@ class TestRegistry:
         registry = InstanceRegistry()
         registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
         registry.add("decode", f"127.0.0.1:{_DECODE_PORT_2}")
+        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_1}")
+        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_2}")
         registry.mark_unhealthy(f"127.0.0.1:{_DECODE_PORT_1}")
         available = registry.get_available_instances("decode")
         assert len(available) == 1
@@ -190,6 +197,8 @@ class TestCircuitBreakerIntegration:
         )
         registry.add("decode", "10.0.0.1:8200")
         registry.add("decode", "10.0.0.2:8200")
+        registry.mark_healthy("10.0.0.1:8200")
+        registry.mark_healthy("10.0.0.2:8200")
 
         # Two failures → circuit opens
         registry.record_failure("10.0.0.1:8200")
@@ -211,6 +220,7 @@ class TestCircuitBreakerIntegration:
             clock=lambda: t[0],
         )
         registry.add("decode", "10.0.0.1:8200")
+        registry.mark_healthy("10.0.0.1:8200")
 
         # Open circuit
         registry.record_failure("10.0.0.1:8200")
