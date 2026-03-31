@@ -6,8 +6,8 @@
 ## Overview
 
 MicroPDProxy's resilience layer consists of four components that work together
-to detect failures, isolate bad nodes, retry failed requests, and
-automatically recover when nodes come back online.
+to detect failures, isolate bad instances, retry failed requests, and
+automatically recover when instances come back online.
 
 ```
                     ┌──────────────────┐
@@ -16,55 +16,56 @@ automatically recover when nodes come back online.
                     └────────┬─────────┘
                              │ mark healthy / unhealthy
                              ▼
-┌──────────┐        ┌──────────────────┐        ┌─────────────────┐
-│ Incoming │───────►│ Instance Registry │───────►│ Circuit Breaker │
-│ Request  │        │  (node state DB)  │        │  (per-node FSM) │
-└──────────┘        └──────────────────┘        └────────┬────────┘
-                                                         │ node available?
-                                                         ▼
-                                                ┌─────────────────┐
-                                                │     Retry       │
-                                                │ (exp. backoff)  │
-                                                └─────────────────┘
+┌──────────┐        ┌──────────────────────┐        ┌─────────────────────┐
+│ Incoming │───────►│  Instance Registry    │───────►│   Circuit Breaker   │
+│ Request  │        │ (instance state DB)   │        │ (per-instance FSM)  │
+└──────────┘        └──────────────────────┘        └────────┬────────────┘
+                                                             │ instance available?
+                                                             ▼
+                                                    ┌─────────────────┐
+                                                    │     Retry       │
+                                                    │ (exp. backoff)  │
+                                                    └─────────────────┘
 ```
 
-**Flow:** The Health Monitor continuously probes nodes and updates the Instance
-Registry. When a request arrives, the scheduler queries the registry for
-available nodes (those that are healthy and have a closed circuit breaker). If
-a request fails, the Retry component re-dispatches it to a different healthy
-node with exponential backoff. Repeated failures trigger the Circuit Breaker to
-open, removing the node from rotation until it recovers.
+**Flow:** The Health Monitor continuously probes instances and updates the
+Instance Registry. When a request arrives, the scheduler queries the registry
+for available instances (those that are healthy and have a closed circuit
+breaker). If a request fails, the Retry component re-dispatches it to a
+different healthy instance with exponential backoff. Repeated failures trigger
+the Circuit Breaker to open, removing the instance from rotation until it
+recovers.
 
 ## Instance Registry
 
 ### What
 
-A centralized `InstanceRegistry` that tracks every prefill and decode node's
-state in one place. All other components — scheduler, circuit breaker, health
-monitor — read from and write to the registry.
+A centralized `InstanceRegistry` that tracks every prefill and decode
+instance's state in one place. All other components — scheduler, circuit
+breaker, health monitor — read from and write to the registry.
 
 ### Why
 
-Currently node state is scattered across multiple data structures. Adding or
-removing a node requires touching several places. A single registry makes
-state management reliable and consistent.
+Currently instance state is scattered across multiple data structures. Adding
+or removing an instance requires touching several places. A single registry
+makes state management reliable and consistent.
 
 ### API
 
 | Method | Description |
 |---|---|
-| `add(role, address)` | Register a node (prefill or decode). |
-| `remove(address)` | Remove a node from the registry. |
-| `get_available_nodes(role)` | Return only healthy nodes with closed circuit breakers. |
-| `mark_healthy(address)` | Mark a node as healthy (called by Health Monitor). |
-| `mark_unhealthy(address)` | Mark a node as unhealthy (called by Health Monitor). |
+| `add(role, address)` | Register an instance (prefill or decode). |
+| `remove(address)` | Remove an instance from the registry. |
+| `get_available_instances(role)` | Return only healthy instances with closed circuit breakers. |
+| `mark_healthy(address)` | Mark an instance as healthy (called by Health Monitor). |
+| `mark_unhealthy(address)` | Mark an instance as unhealthy (called by Health Monitor). |
 | `record_success(address)` | Record a successful request (feeds circuit breaker). |
 | `record_failure(address)` | Record a failed request (feeds circuit breaker). |
 | `get_status(address)` | Return current status, circuit state, and metadata. |
 
-### Per-Node State
+### Per-Instance State
 
-Each node entry stores: `address`, `role` (prefill/decode), `status`
+Each instance entry stores: `address`, `role` (prefill/decode), `status`
 (healthy/unhealthy/unknown), `circuit_breaker_state`, `last_health_check`,
 `active_request_count`.
 
@@ -72,36 +73,36 @@ Each node entry stores: `address`, `role` (prefill/decode), `status`
 
 ### What
 
-A background async task that continuously pings every registered node and
+A background async task that continuously pings every registered instance and
 updates the Instance Registry based on health check responses.
 
 ### Why
 
-Without active health checking, dead nodes are only discovered when a real
+Without active health checking, dead instances are only discovered when a real
 user request fails. The Health Monitor detects failures proactively — typically
-within one check interval — and removes bad nodes from rotation before users
-are affected.
+within one check interval — and removes bad instances from rotation before
+users are affected.
 
 ### How It Works
 
 ```
 Every <interval_seconds> seconds:
-  For each node in registry:
-    GET http://{node}/health  (timeout: <timeout_seconds>)
-    If 200 OK  → registry.mark_healthy(node)
-    If error   → registry.mark_unhealthy(node)
+  For each instance in registry:
+    GET http://{instance}/health  (timeout: <timeout_seconds>)
+    If 200 OK  → registry.mark_healthy(instance)
+    If error   → registry.mark_unhealthy(instance)
 ```
 
 ### Example Timeline
 
 ```
-t=0s    All 4 decode nodes healthy
-t=10s   Health check: node 2 timeout → mark unhealthy (failure count: 1)
-t=20s   Health check: node 2 timeout → failure count: 2
+t=0s    All 4 decode instances healthy
+t=10s   Health check: instance 2 timeout → mark unhealthy (failure count: 1)
+t=20s   Health check: instance 2 timeout → failure count: 2
 ...
-t=50s   Health check: node 2 timeout → failure count reaches threshold
-        → Circuit breaker OPENS for node 2
-t=60s   Node 2 comes back, health check returns 200
+t=50s   Health check: instance 2 timeout → failure count reaches threshold
+        → Circuit breaker OPENS for instance 2
+t=60s   Instance 2 comes back, health check returns 200
         → mark healthy → circuit transitions to HALF-OPEN → probe → CLOSED
 ```
 
@@ -118,15 +119,15 @@ health_check:
 
 ### What
 
-A per-node finite state machine that automatically stops sending requests to a
-node that is consistently failing, and gradually recovers when the node comes
-back.
+A per-instance finite state machine that automatically stops sending requests
+to an instance that is consistently failing, and gradually recovers when the
+instance comes back.
 
 ### Why
 
-Without a circuit breaker, a dead node keeps receiving requests that all fail,
-wasting time and causing user-visible errors. With it, failures are detected
-quickly and traffic is transparently redirected to healthy nodes.
+Without a circuit breaker, a dead instance keeps receiving requests that all
+fail, wasting time and causing user-visible errors. With it, failures are
+detected quickly and traffic is transparently redirected to healthy instances.
 
 ### State Machine
 
@@ -158,15 +159,15 @@ quickly and traffic is transparently redirected to healthy nodes.
 ### Example Scenario Timeline
 
 ```
-t=0s    Node 10.0.0.2:8200 starts failing
+t=0s    Instance 10.0.0.2:8200 starts failing
 t=0-5s  5 consecutive request failures (failure_threshold=5)
-        → Circuit OPENS for this node
-t=5-35s All requests skip this node (routed to healthy nodes)
+        → Circuit OPENS for this instance
+t=5-35s All requests skip this instance (routed to healthy instances)
         → Users see no errors (transparent failover)
 t=35s   timeout_duration=30s expires → Circuit goes HALF-OPEN
 t=35s   One probe request sent to 10.0.0.2:8200
         → If success: send 1 more (success_threshold=2)
-        → If both succeed: Circuit CLOSES, node is back in rotation
+        → If both succeed: Circuit CLOSES, instance is back in rotation
         → If probe fails: Circuit re-OPENS, wait another 30s
 ```
 
@@ -183,11 +184,11 @@ circuit_breaker:
 
 ### Status Endpoint
 
-When enabled, `GET /status` includes per-node circuit breaker state:
+When enabled, `GET /status` includes per-instance circuit breaker state:
 
 ```json
 {
-  "nodes": {
+  "instances": {
     "10.0.0.1:8200": {"status": "healthy", "circuit": "closed"},
     "10.0.0.2:8200": {"status": "unhealthy", "circuit": "open", "open_since": "2026-04-01T10:00:05Z"},
     "10.0.0.3:8200": {"status": "healthy", "circuit": "closed"}
@@ -199,15 +200,15 @@ When enabled, `GET /status` includes per-node circuit breaker state:
 
 ### What
 
-When a request to a node fails with a retryable error, the proxy automatically
-retries on a *different* healthy node, with increasing delay between attempts
-to avoid overwhelming the system.
+When a request to an instance fails with a retryable error, the proxy
+automatically retries on a *different* healthy instance, with increasing delay
+between attempts to avoid overwhelming the system.
 
 ### Why
 
 Transient failures (network blips, brief overloads) can be recovered from
 without the user ever seeing an error. Backoff with jitter prevents all retries
-from hitting the same node at the same time (thundering herd problem).
+from hitting the same instance at the same time (thundering herd problem).
 
 ### Backoff Formula
 
@@ -234,7 +235,7 @@ Without retry:
 |---|---|
 | 408 Request Timeout | 4xx client errors (400, 401, 403, 404, 422) |
 | 429 Too Many Requests | Requests that already started streaming |
-| 500 Internal Server Error | When all nodes have open circuit breakers |
+| 500 Internal Server Error | When all instances have open circuit breakers |
 | 502 Bad Gateway | |
 | 503 Service Unavailable | |
 | 504 Gateway Timeout | |
@@ -298,10 +299,10 @@ enabled independently.
 
 | Symptom | Possible Cause | Resolution |
 |---|---|---|
-| All requests return 503 | All nodes are unhealthy or all circuit breakers are open | Check node health manually; verify network connectivity; check `/status` endpoint for circuit breaker states |
-| Node marked unhealthy but is actually running | Health check timeout too short; network latency | Increase `health_check.timeout_seconds` |
+| All requests return 503 | All instances are unhealthy or all circuit breakers are open | Check instance health manually; verify network connectivity; check `/status` endpoint for circuit breaker states |
+| Instance marked unhealthy but is actually running | Health check timeout too short; network latency | Increase `health_check.timeout_seconds` |
 | Circuit breaker opens too quickly | `failure_threshold` is too low or transient errors are common | Increase `failure_threshold` or `window_duration_seconds` |
-| Circuit breaker never recovers | Node is genuinely down; `timeout_duration_seconds` is too long | Check node status; reduce `timeout_duration_seconds` for faster probing |
+| Circuit breaker never recovers | Instance is genuinely down; `timeout_duration_seconds` is too long | Check instance status; reduce `timeout_duration_seconds` for faster probing |
 | Retries cause duplicate processing | Retrying non-idempotent requests | Ensure only idempotent endpoints are exposed through the proxy; streaming requests are never retried |
 | Retry storms under load | Too many retries with insufficient backoff | Reduce `max_retries`; increase `initial_backoff_ms` and `backoff_multiplier` |
 | High latency on retried requests | Backoff delays accumulating | Reduce `max_backoff_ms`; consider whether retries are appropriate for your latency SLA |
