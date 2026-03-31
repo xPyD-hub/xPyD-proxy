@@ -170,6 +170,10 @@ run.
 
 ## General
 
+- **English only** — all content on GitHub must be in English. This includes
+  code, comments, commit messages, PR titles/descriptions, review comments,
+  and inline annotations. No Chinese characters allowed anywhere in the repo
+  or on GitHub.
 - **Secrets** — never hardcode tokens or credentials in code, PR descriptions,
   or bot prompts. Read from secure storage at runtime.
 - **Scope** — bots should limit their actions to reviewing code. No issue
