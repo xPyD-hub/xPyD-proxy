@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import pytest
-
 from circuit_breaker import CircuitBreaker, CircuitState
-
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -77,9 +75,7 @@ class TestClosedToOpen:
         assert cb.state == CircuitState.CLOSED
 
     def test_failures_outside_window_are_ignored(self):
-        cb, clock = _make_cb(
-            failure_threshold=3, window_duration_seconds=10
-        )
+        cb, clock = _make_cb(failure_threshold=3, window_duration_seconds=10)
         cb.record_failure()
         clock.advance(6)
         cb.record_failure()
@@ -94,9 +90,7 @@ class TestClosedToOpen:
 
 class TestOpenToHalfOpen:
     def test_transitions_after_timeout(self):
-        cb, clock = _make_cb(
-            failure_threshold=2, timeout_duration_seconds=30
-        )
+        cb, clock = _make_cb(failure_threshold=2, timeout_duration_seconds=30)
         cb.record_failure()
         cb.record_failure()
         assert cb.state == CircuitState.OPEN
@@ -105,18 +99,14 @@ class TestOpenToHalfOpen:
         assert cb.state == CircuitState.HALF_OPEN
 
     def test_stays_open_before_timeout(self):
-        cb, clock = _make_cb(
-            failure_threshold=2, timeout_duration_seconds=30
-        )
+        cb, clock = _make_cb(failure_threshold=2, timeout_duration_seconds=30)
         cb.record_failure()
         cb.record_failure()
         clock.advance(29)
         assert cb.state == CircuitState.OPEN
 
     def test_allows_probe_in_half_open(self):
-        cb, clock = _make_cb(
-            failure_threshold=2, timeout_duration_seconds=10
-        )
+        cb, clock = _make_cb(failure_threshold=2, timeout_duration_seconds=10)
         cb.record_failure()
         cb.record_failure()
         clock.advance(10)
@@ -162,9 +152,7 @@ class TestHalfOpenToClosed:
 
 class TestHalfOpenToOpen:
     def test_reopens_on_probe_failure(self):
-        cb, clock = _make_cb(
-            failure_threshold=2, timeout_duration_seconds=10
-        )
+        cb, clock = _make_cb(failure_threshold=2, timeout_duration_seconds=10)
         cb.record_failure()
         cb.record_failure()
         clock.advance(10)
@@ -174,9 +162,7 @@ class TestHalfOpenToOpen:
         assert cb.state == CircuitState.OPEN
 
     def test_reopened_circuit_needs_timeout_again(self):
-        cb, clock = _make_cb(
-            failure_threshold=2, timeout_duration_seconds=10
-        )
+        cb, clock = _make_cb(failure_threshold=2, timeout_duration_seconds=10)
         # Trip → half-open → fail → re-open
         cb.record_failure()
         cb.record_failure()
@@ -232,14 +218,13 @@ class TestCircuitBreakerConfig:
     def test_config_from_dict(self):
         from config import CircuitBreakerConfig
 
-        cb_cfg = CircuitBreakerConfig(
-            enabled=True, failure_threshold=10
-        )
+        cb_cfg = CircuitBreakerConfig(enabled=True, failure_threshold=10)
         assert cb_cfg.enabled is True
         assert cb_cfg.failure_threshold == 10
 
     def test_config_rejects_unknown_fields(self):
         from config import CircuitBreakerConfig
+        from pydantic import ValidationError
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError, match="bogus"):
             CircuitBreakerConfig(enabled=True, bogus=42)
