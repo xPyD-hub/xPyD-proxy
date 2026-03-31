@@ -29,13 +29,14 @@ Usage:
   bash xpyd_start_proxy.sh \
     --prefill-nodes <n> --prefill-tp-size <n> --prefill-dp-size <n> --prefill-world-size-per-node <n> \
     --decode-nodes <n>  --decode-tp-size <n>  --decode-dp-size <n>  --decode-world-size-per-node <n> \
-    [--prefill-base-port <n>] [--decode-base-port <n>] [--mode advanced|basic|benchmark|benchmark_decode]
+    [--prefill-base-port <n>] [--decode-base-port <n>] [--model <path>] [--mode advanced|basic|benchmark|benchmark_decode]
 
 Short aliases:
   -pn  -pt  -pd  -pw
   -dn  -dt  -dd  -dw
 
 Notes:
+  - --model can also be set via model_path env var (CLI takes precedence).
   - tp_size and dp_size must be powers of two.
   - tp_size * dp_size must equal nodes * world_size_per_node.
   - One instance = one TP group.
@@ -149,6 +150,7 @@ DECODE_WORLD_SIZE_PER_NODE=""
 PREFILL_BASE_PORT=$DEFAULT_PREFILL_BASE_PORT
 DECODE_BASE_PORT=$DEFAULT_DECODE_BASE_PORT
 MODE=$DEFAULT_MODE
+MODEL_PATH="${model_path:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -207,6 +209,11 @@ while [[ $# -gt 0 ]]; do
             MODE=$2
             shift 2
             ;;
+        --model)
+            require_value "$1" "${2:-}"
+            MODEL_PATH="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -242,8 +249,8 @@ validate_topology "decode" \
     "$DECODE_WORLD_SIZE_PER_NODE" \
     "${#DECODE_IPS[@]}"
 
-if [[ -z "${model_path:-}" ]]; then
-    error "model_path environment variable is not set"
+if [[ -z "$MODEL_PATH" ]]; then
+    error "model path is not set. Use --model <path> or set model_path env var."
 fi
 
 PREFILL_ARGS=$(build_instance_endpoints \
@@ -267,7 +274,7 @@ DECODE_ARGS=$(build_instance_endpoints \
 case "$MODE" in
     benchmark)
         CMD="python3 ./MicroPDProxyServer.py \
-        --model $model_path \
+        --model $MODEL_PATH \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \
         --port $DEFAULT_PROXY_PORT \
@@ -277,7 +284,7 @@ case "$MODE" in
         ;;
     advanced|basic|benchmark_decode)
         CMD="python3 ./MicroPDProxyServer.py \
-        --model $model_path \
+        --model $MODEL_PATH \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \
         --port $DEFAULT_PROXY_PORT"
