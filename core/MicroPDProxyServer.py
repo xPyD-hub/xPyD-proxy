@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 from transformers import AutoTokenizer
 from asyncio import CancelledError
 from fastapi.middleware.cors import CORSMiddleware
+from config import ProxyConfig
 from metrics import get_metrics, track_request_end, track_request_start
 from scheduler import (
     LoadBalancedScheduler,
@@ -856,53 +857,28 @@ class ProxyServer:
 
     def __init__(
         self,
-        args: argparse.Namespace,
+        config: ProxyConfig,
         scheduling_policy: Optional[SchedulingPolicy] = None,
         create_completion: Optional[Callable[[Request],
                                              StreamingResponse]] = None,
         create_chat_completion: Optional[Callable[[Request],
                                                   StreamingResponse]] = None,
     ):
-        self.validate_parsed_serve_args(args)
-        self.port = args.port
+        self.config = config
+        self.verify_model_config(config.prefill, config.model)
+        self.verify_model_config(config.decode, config.model)
+        self.port = config.port
         self.proxy_instance = Proxy(
-            prefill_instances=[] if args.prefill is None else args.prefill,
-            decode_instances=[] if args.decode is None else args.decode,
-            model=args.model,
-            scheduling_policy=(scheduling_policy(args.prefill, args.decode)
+            prefill_instances=config.prefill,
+            decode_instances=config.decode,
+            model=config.model,
+            scheduling_policy=(scheduling_policy(config.prefill, config.decode)
                                if scheduling_policy is not None else
                                RoundRobinSchedulingPolicy()),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
-            generator_on_p_node=args.generator_on_p_node,
+            generator_on_p_node=config.generator_on_p_node,
         )
-
-    def validate_parsed_serve_args(self, args: argparse.Namespace):
-        # if not args.prefill:
-        #     raise ValueError("Please specify at least one prefill node.")
-        if not args.decode:
-            raise ValueError("Please specify at least one decode node.")
-        if args.prefill:
-            self.validate_instances(args.prefill)
-            self.verify_model_config(args.prefill, args.model)
-        self.validate_instances(args.decode)
-        self.verify_model_config(args.decode, args.model)
-
-    def validate_instances(self, instances: list):
-        for instance in instances:
-            if len(instance.split(":")) != 2:
-                raise ValueError(f"Invalid instance format: {instance}")
-            host, port = instance.split(":")
-            try:
-                if host != "localhost":
-                    ipaddress.ip_address(host)
-                port = int(port)
-                if not (0 < port < 65536):
-                    raise ValueError(
-                        f"Invalid port number in instance: {instance}")
-            except Exception as e:
-                raise ValueError(
-                    f"Invalid instance {instance}: {str(e)}") from e
 
     def verify_model_config(self, instances: list, model: str) -> None:
         for instance in instances:
@@ -983,9 +959,8 @@ if __name__ == "__main__":
         help="Use Round Robin scheduling for load balancing",
     )
     args = parser.parse_args()
-    if args.roundrobin:
-        proxy_server = ProxyServer(args=args)
-    else:
-        proxy_server = ProxyServer(args=args,
-                                   scheduling_policy=LoadBalancedScheduler)
+    config = ProxyConfig.from_args(args)
+    scheduling_policy = None if config.roundrobin else LoadBalancedScheduler
+    proxy_server = ProxyServer(config=config,
+                               scheduling_policy=scheduling_policy)
     proxy_server.run_server()
