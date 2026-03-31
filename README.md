@@ -201,10 +201,16 @@ PYTHONPATH=core:tests python -m pytest tests/test_metrics.py -v                 
 
 ## Documentation
 
-- [Architecture Overview](docs/architecture.md)
-- [API Reference](docs/api_reference.md)
-- [Deployment Guide](docs/deployment.md)
-- [Proxy Script Usage](docs/xpyd_start_proxy_usage.md)
-- [Local Dummy Setup](docs/one_click_dummy_proxy_setup.md)
-- [Terminal-by-Terminal Quickstart](docs/terminal_by_terminal_quickstart.md)
-- [Contributing](CONTRIBUTING.md)
+| Document | Description |
+|---|---|
+| [Architecture](docs/architecture.md) | System architecture overview |
+| [API Reference](docs/api_reference.md) | HTTP API endpoints |
+| [Configuration](docs/configuration.md) | YAML config file reference |
+| [CLI](docs/cli.md) | `pdproxy` command-line tool (planned) |
+| [Scheduling](docs/scheduling.md) | Load balancing strategies |
+| [Resilience](docs/resilience.md) | Health checks, circuit breakers, retry (planned) |
+| [Metrics](docs/metrics.md) | Prometheus metrics endpoint |
+| [Deployment](docs/deployment.md) | Deployment and Docker guide |
+| [Quick Start](docs/terminal_by_terminal_quickstart.md) | Terminal-by-terminal setup |
+| [One-Click Setup](docs/one_click_dummy_proxy_setup.md) | Quick dummy environment |
+| [Proxy Script](docs/xpyd_start_proxy_usage.md) | xpyd_start_proxy.sh usage |
