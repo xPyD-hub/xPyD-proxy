@@ -145,15 +145,19 @@ there are open (non-draft) PRs authored by the bot. On each trigger it must:
 
 1. **Update branch** — if the PR branch is behind `main`, update it (merge
    `main` into the branch). PRs must always be up-to-date with `main`.
-2. **Review comment check** — read any new `CHANGES_REQUESTED` reviews or
+2. **CI check** — check CI status on the PR. If any check has failed, examine
+   the failure logs, fix the code, and push a new commit. CI must be fully
+   green. Do not wait for reviewers to point out CI failures — fix them
+   proactively.
+3. **Review comment check** — read any new `CHANGES_REQUESTED` reviews or
    inline comments. For each piece of feedback:
    - Fix the code accordingly.
    - Run pre-commit, tests, and linters locally before pushing.
    - Push a new commit (not amend/force-push over the reviewed commit).
-3. **Re-request review** — after pushing fixes, re-request review from the
+4. **Re-request review** — after pushing fixes, re-request review from the
    reviewer(s) who requested changes (via the GitHub API `POST
    /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`).
-4. **Repeat** — continue this cycle until the PR is approved or closed.
+5. **Repeat** — continue this cycle until the PR is approved or closed.
 
 **No force-push.** Force-pushing destroys review context and makes it
 impossible for reviewers to see incremental changes. Always push new commits.
