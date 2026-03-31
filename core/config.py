@@ -27,7 +27,7 @@ from pydantic import (
 
 
 class CircuitBreakerConfig(BaseModel):
-    """Configuration for the per-node circuit breaker."""
+    """Configuration for the per-instance circuit breaker."""
 
     model_config = ConfigDict(extra="forbid")
 

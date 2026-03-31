@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for per-node circuit breaker state machine."""
+"""Tests for per-instance circuit breaker state machine."""
 
 from __future__ import annotations
 

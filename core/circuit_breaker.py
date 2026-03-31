@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Per-node circuit breaker with CLOSED / OPEN / HALF-OPEN state machine.
+"""Per-instance circuit breaker with CLOSED / OPEN / HALF-OPEN state machine.
 
-The circuit breaker prevents sending requests to a node that is
-consistently failing and gradually recovers when the node comes back.
+The circuit breaker prevents sending requests to an instance that is
+consistently failing and gradually recovers when the instance comes back.
 
 State transitions::
 
@@ -29,7 +29,7 @@ class CircuitState(str, enum.Enum):
 
 
 class CircuitBreaker:
-    """Per-node circuit breaker.
+    """Per-instance circuit breaker.
 
     Parameters
     ----------
@@ -86,7 +86,7 @@ class CircuitBreaker:
         return self._state
 
     def allow_request(self) -> bool:
-        """Return ``True`` if a request should be sent through this node.
+        """Return ``True`` if a request should be sent through this instance.
 
         * CLOSED  → always allow
         * OPEN    → deny (caller should route elsewhere)
