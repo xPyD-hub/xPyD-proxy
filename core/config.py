@@ -38,9 +38,9 @@ class CircuitBreakerConfig(BaseModel):
     window_duration_seconds: int = 60
 
 try:
-    from .retry import RetryConfig
+    from .resilience import ResilienceConfig
 except ImportError:
-    from retry import RetryConfig
+    from resilience import ResilienceConfig
 
 try:
     from .topology import expand_topology
@@ -76,7 +76,7 @@ class ProxyConfig(BaseModel):
     probe_interval_seconds: int = 10
     health_check: HealthCheckConfig = HealthCheckConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
-    retry: RetryConfig = RetryConfig()
+    retry: ResilienceConfig = ResilienceConfig()
 
     # ------------------------------------------------------------------
     # Validators
@@ -341,6 +341,6 @@ class ProxyConfig(BaseModel):
 
         # 8. Retry config (YAML only, no CLI override)
         if retry_raw is not None:
-            merged["retry"] = RetryConfig(**retry_raw)
+            merged["retry"] = ResilienceConfig(**retry_raw)
 
         return cls(**merged)
