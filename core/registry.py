@@ -37,7 +37,7 @@ class InstanceInfo:
 
     address: str
     role: str  # "prefill" or "decode"
-    status: InstanceStatus = InstanceStatus.UNKNOWN
+    status: InstanceStatus = InstanceStatus.HEALTHY
     last_health_check: Optional[float] = None
     active_request_count: int = 0
     circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
@@ -49,7 +49,7 @@ class _InstanceRecord:
 
     address: str
     role: str
-    status: InstanceStatus = InstanceStatus.UNKNOWN
+    status: InstanceStatus = InstanceStatus.HEALTHY
     last_health_check: Optional[float] = None
     active_request_count: int = 0
     circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)

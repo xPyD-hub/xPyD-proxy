@@ -35,6 +35,8 @@ try:
     from .config import ProxyConfig
     from .discovery import NodeDiscovery
     from .metrics import get_metrics, track_request_end, track_request_start
+    from .health_monitor import HealthMonitor
+    from .registry import InstanceRegistry
     from .scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
@@ -44,6 +46,8 @@ except ImportError:
     from config import ProxyConfig
     from discovery import NodeDiscovery
     from metrics import get_metrics, track_request_end, track_request_start
+    from health_monitor import HealthMonitor
+    from registry import InstanceRegistry
     from scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
@@ -879,6 +883,34 @@ class ProxyServer:
         self.verify_model_config(config.prefill, config.model)
         self.verify_model_config(config.decode, config.model)
         self.port = config.port
+
+        # Create instance registry and register all instances
+        cb_cfg = config.circuit_breaker
+        self.registry = InstanceRegistry(
+            cb_enabled=cb_cfg.enabled,
+            failure_threshold=cb_cfg.failure_threshold,
+            success_threshold=cb_cfg.success_threshold,
+            timeout_duration_seconds=cb_cfg.timeout_duration_seconds,
+            window_duration_seconds=cb_cfg.window_duration_seconds,
+        )
+        for addr in config.prefill:
+            self.registry.add("prefill", addr)
+        for addr in config.decode:
+            self.registry.add("decode", addr)
+
+        # Create health monitor if enabled
+        self.health_monitor = None
+        hc_cfg = config.health_check
+        if hc_cfg.enabled:
+            all_instances = config.prefill + config.decode
+            self.health_monitor = HealthMonitor(
+                nodes=all_instances,
+                interval_seconds=hc_cfg.interval_seconds,
+                timeout_seconds=hc_cfg.timeout_seconds,
+                on_healthy=self.registry.mark_healthy,
+                on_unhealthy=self.registry.mark_unhealthy,
+            )
+
         self.proxy_instance = Proxy(
             prefill_instances=config.prefill,
             decode_instances=config.decode,
@@ -940,10 +972,28 @@ class ProxyServer:
         @app.on_event("startup")
         async def _start_discovery():
             await discovery.start()
+            if self.health_monitor:
+                await self.health_monitor.start()
 
         @app.on_event("shutdown")
         async def _stop_discovery():
             await discovery.stop()
+            if self.health_monitor:
+                await self.health_monitor.stop()
+
+        @app.get("/status/instances")
+        async def _instance_status():
+            """Return per-instance health and circuit breaker state."""
+            result = {"prefill_instances": [], "decode_instances": []}
+            for role in ("prefill", "decode"):
+                for info in self.registry.get_all_instances(role):
+                    result[f"{role}_instances"].append({
+                        "address": info.address,
+                        "status": info.status.value,
+                        "circuit": info.circuit_breaker_state.value,
+                        "active_requests": info.active_request_count,
+                    })
+            return JSONResponse(result)
 
         app.include_router(self.proxy_instance.router)
         config = uvicorn.Config(app,
