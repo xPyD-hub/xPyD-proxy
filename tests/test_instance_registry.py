@@ -6,7 +6,7 @@ import concurrent.futures
 import threading
 
 import pytest
-from registry import CircuitBreakerState, InstanceRegistry, NodeStatus
+from registry import CircuitBreakerState, InstanceRegistry, InstanceStatus
 
 # ---------------------------------------------------------------------------
 # Add / Remove
@@ -21,7 +21,7 @@ class TestAddRemove:
         reg.add("decode", "10.0.0.1:8200")
         info = reg.get_node_info("10.0.0.1:8200")
         assert info.role == "decode"
-        assert info.status == NodeStatus.UNKNOWN
+        assert info.status == InstanceStatus.UNKNOWN
         assert info.circuit_breaker_state == CircuitBreakerState.CLOSED
 
     def test_add_prefill_node(self) -> None:
@@ -295,5 +295,5 @@ class TestConcurrency:
         reg.mark_healthy("10.0.0.1:8200")
         snapshot = reg.get_node_info("10.0.0.1:8200")
         reg.mark_unhealthy("10.0.0.1:8200")
-        assert snapshot.status == NodeStatus.HEALTHY
-        assert reg.get_node_info("10.0.0.1:8200").status == NodeStatus.UNHEALTHY
+        assert snapshot.status == InstanceStatus.HEALTHY
+        assert reg.get_node_info("10.0.0.1:8200").status == InstanceStatus.UNHEALTHY

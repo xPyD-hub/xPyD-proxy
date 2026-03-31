@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 
-class NodeStatus(str, Enum):
+class InstanceStatus(str, Enum):
     """Health status of a node."""
 
     HEALTHY = "healthy"
@@ -36,7 +36,7 @@ class NodeInfo:
 
     address: str
     role: str  # "prefill" or "decode"
-    status: NodeStatus = NodeStatus.UNKNOWN
+    status: InstanceStatus = InstanceStatus.UNKNOWN
     circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
     last_health_check: Optional[float] = None
     active_request_count: int = 0
@@ -101,7 +101,7 @@ class InstanceRegistry:
                 node.address
                 for node in self._nodes.values()
                 if node.role == role
-                and node.status == NodeStatus.HEALTHY
+                and node.status == InstanceStatus.HEALTHY
                 and node.circuit_breaker_state
                 in (CircuitBreakerState.CLOSED, CircuitBreakerState.HALF_OPEN)
             ]
@@ -117,7 +117,7 @@ class InstanceRegistry:
         """
         with self._lock:
             node = self._get_node(address)
-            node.status = NodeStatus.HEALTHY
+            node.status = InstanceStatus.HEALTHY
             node.last_health_check = time.monotonic()
 
     def mark_unhealthy(self, address: str) -> None:
@@ -131,7 +131,7 @@ class InstanceRegistry:
         """
         with self._lock:
             node = self._get_node(address)
-            node.status = NodeStatus.UNHEALTHY
+            node.status = InstanceStatus.UNHEALTHY
             node.last_health_check = time.monotonic()
 
     def record_success(self, address: str) -> None:
