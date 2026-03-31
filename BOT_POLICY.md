@@ -160,6 +160,9 @@ there are open (non-draft) PRs authored by the bot. On each trigger it must:
    - Fix the code accordingly.
    - Run pre-commit, tests, and linters locally before pushing.
    - Push a new commit (not amend/force-push over the reviewed commit).
+   - **Reply to each review comment** that was addressed, referencing the
+     fix commit (e.g. "Fixed in `abc1234`."). This makes it easy to see
+     at a glance which comments have been resolved and which are new.
 4. **Re-request review** — after pushing fixes, re-request review from the
    reviewer(s) who requested changes (via the GitHub API `POST
    /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`).
