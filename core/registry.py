@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
 try:
-    from circuit_breaker import CircuitBreakerState
+    from circuit_breaker import CircuitBreaker, CircuitBreakerState
 except ImportError:
-    from .circuit_breaker import CircuitBreakerState
+    from .circuit_breaker import CircuitBreaker, CircuitBreakerState
 
 
 class InstanceStatus(str, Enum):
@@ -34,11 +34,14 @@ class InstanceInfo:
     address: str
     role: str  # "prefill" or "decode"
     status: InstanceStatus = InstanceStatus.UNKNOWN
-    circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
     last_health_check: Optional[float] = None
     active_request_count: int = 0
-    consecutive_failures: int = 0
-    consecutive_successes: int = 0
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
+
+    @property
+    def circuit_breaker_state(self) -> CircuitBreakerState:
+        """Current circuit breaker state, delegated to the CircuitBreaker."""
+        return self.circuit_breaker.state
 
 
 class InstanceRegistry:
@@ -67,7 +70,11 @@ class InstanceRegistry:
         with self._lock:
             if address in self._instances:
                 raise ValueError(f"Instance {address!r} is already registered.")
-            self._instances[address] = InstanceInfo(address=address, role=role)
+            self._instances[address] = InstanceInfo(
+                address=address,
+                role=role,
+                circuit_breaker=CircuitBreaker(),
+            )
 
     def remove(self, address: str) -> None:
         """Remove an instance from the registry.
@@ -100,7 +107,7 @@ class InstanceRegistry:
                 for instance in self._instances.values()
                 if instance.role == role
                 and instance.status == InstanceStatus.HEALTHY
-                and instance.circuit_breaker_state == CircuitBreakerState.CLOSED
+                and instance.circuit_breaker.state == CircuitBreakerState.CLOSED
             ]
 
     def mark_healthy(self, address: str) -> None:
@@ -134,7 +141,7 @@ class InstanceRegistry:
     def record_success(self, address: str) -> None:
         """Record a successful request to an instance.
 
-        Resets consecutive failure count and increments success count.
+        Delegates to the instance's CircuitBreaker.
 
         Args:
             address: Instance address.
@@ -144,13 +151,12 @@ class InstanceRegistry:
         """
         with self._lock:
             instance = self._get_instance(address)
-            instance.consecutive_failures = 0
-            instance.consecutive_successes += 1
+            instance.circuit_breaker.record_success()
 
     def record_failure(self, address: str) -> None:
         """Record a failed request to an instance.
 
-        Resets consecutive success count and increments failure count.
+        Delegates to the instance's CircuitBreaker.
 
         Args:
             address: Instance address.
@@ -160,8 +166,7 @@ class InstanceRegistry:
         """
         with self._lock:
             instance = self._get_instance(address)
-            instance.consecutive_successes = 0
-            instance.consecutive_failures += 1
+            instance.circuit_breaker.record_failure()
 
     def get_instance_info(self, address: str) -> InstanceInfo:
         """Return a snapshot of instance info.
@@ -181,11 +186,9 @@ class InstanceRegistry:
                 address=instance.address,
                 role=instance.role,
                 status=instance.status,
-                circuit_breaker_state=instance.circuit_breaker_state,
                 last_health_check=instance.last_health_check,
                 active_request_count=instance.active_request_count,
-                consecutive_failures=instance.consecutive_failures,
-                consecutive_successes=instance.consecutive_successes,
+                circuit_breaker=instance.circuit_breaker,
             )
 
     def get_all_instances(self) -> List[InstanceInfo]:
@@ -196,22 +199,6 @@ class InstanceRegistry:
         """
         with self._lock:
             return [self.get_instance_info(addr) for addr in self._instances]
-
-    def set_circuit_breaker_state(
-        self, address: str, state: CircuitBreakerState
-    ) -> None:
-        """Update the circuit breaker state for an instance.
-
-        Args:
-            address: Instance address.
-            state: New circuit breaker state.
-
-        Raises:
-            KeyError: If address is not registered.
-        """
-        with self._lock:
-            instance = self._get_instance(address)
-            instance.circuit_breaker_state = state
 
     def increment_active_requests(self, address: str) -> None:
         """Increment the active request count for an instance.

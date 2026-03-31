@@ -95,17 +95,36 @@ class TestGetAvailableInstances:
         assert reg.get_available_instances("decode") == []
 
     def test_open_circuit_breaker_excluded(self) -> None:
+        """Trigger enough failures to open the circuit breaker."""
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
         reg.mark_healthy("10.0.0.1:8200")
-        reg.set_circuit_breaker_state("10.0.0.1:8200", CircuitBreakerState.OPEN)
+        # Default failure_threshold is 5
+        for _ in range(5):
+            reg.record_failure("10.0.0.1:8200")
+        info = reg.get_instance_info("10.0.0.1:8200")
+        assert info.circuit_breaker_state == CircuitBreakerState.OPEN
         assert reg.get_available_instances("decode") == []
 
     def test_half_open_circuit_breaker_excluded(self) -> None:
+        """Trip breaker then advance time so it becomes HALF_OPEN."""
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
         reg.mark_healthy("10.0.0.1:8200")
-        reg.set_circuit_breaker_state("10.0.0.1:8200", CircuitBreakerState.HALF_OPEN)
+
+        # Use a controllable clock on the circuit breaker
+        t = [0.0]
+        info = reg.get_instance_info("10.0.0.1:8200")
+        cb = info.circuit_breaker
+        cb._clock = lambda: t[0]
+
+        for _ in range(5):
+            cb.record_failure()
+        assert cb.state == CircuitBreakerState.OPEN
+
+        # Advance past timeout
+        t[0] = cb.timeout_duration_seconds + 1
+        assert cb.state == CircuitBreakerState.HALF_OPEN
         assert reg.get_available_instances("decode") == []
 
     def test_role_filtering(self) -> None:
@@ -148,32 +167,43 @@ class TestGetAvailableInstances:
 
 
 # ---------------------------------------------------------------------------
-# record_success / record_failure
+# record_success / record_failure (delegated to CircuitBreaker)
 # ---------------------------------------------------------------------------
 
 
 class TestRecordSuccessFailure:
-    """Tests for request outcome recording."""
+    """Tests for request outcome recording via CircuitBreaker."""
 
-    def test_record_success_resets_failures(self) -> None:
+    def test_record_failure_trips_breaker(self) -> None:
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
-        reg.record_failure("10.0.0.1:8200")
-        reg.record_failure("10.0.0.1:8200")
-        reg.record_success("10.0.0.1:8200")
+        for _ in range(5):
+            reg.record_failure("10.0.0.1:8200")
         info = reg.get_instance_info("10.0.0.1:8200")
-        assert info.consecutive_failures == 0
-        assert info.consecutive_successes == 1
+        assert info.circuit_breaker_state == CircuitBreakerState.OPEN
 
-    def test_record_failure_resets_successes(self) -> None:
+    def test_record_success_closes_half_open(self) -> None:
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
-        reg.record_success("10.0.0.1:8200")
-        reg.record_success("10.0.0.1:8200")
-        reg.record_failure("10.0.0.1:8200")
-        info = reg.get_instance_info("10.0.0.1:8200")
-        assert info.consecutive_successes == 0
-        assert info.consecutive_failures == 1
+
+        # Get a handle to the actual circuit breaker and use a fake clock
+        t = [0.0]
+        cb = reg.get_instance_info("10.0.0.1:8200").circuit_breaker
+        cb._clock = lambda: t[0]
+
+        # Trip the breaker
+        for _ in range(5):
+            cb.record_failure()
+        assert cb.state == CircuitBreakerState.OPEN
+
+        # Advance past timeout → HALF_OPEN
+        t[0] = cb.timeout_duration_seconds + 1
+        assert cb.state == CircuitBreakerState.HALF_OPEN
+
+        # success_threshold defaults to 2
+        cb.record_success()
+        cb.record_success()
+        assert cb.state == CircuitBreakerState.CLOSED
 
     def test_record_on_nonexistent_raises(self) -> None:
         reg = InstanceRegistry()
@@ -258,10 +288,13 @@ class TestConcurrency:
         t1.join()
         t2.join()
 
+        # After concurrent ops, circuit breaker state should be valid.
         info = reg.get_instance_info("10.0.0.1:8200")
-        # After concurrent ops, counters should be non-negative integers.
-        assert info.consecutive_failures >= 0
-        assert info.consecutive_successes >= 0
+        assert info.circuit_breaker_state in {
+            CircuitBreakerState.CLOSED,
+            CircuitBreakerState.OPEN,
+            CircuitBreakerState.HALF_OPEN,
+        }
 
     def test_concurrent_increment_decrement(self) -> None:
         """Active request count stays consistent under contention."""
