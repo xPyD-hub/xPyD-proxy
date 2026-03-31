@@ -48,22 +48,80 @@ Add observability to the proxy via a Prometheus-compatible metrics endpoint.
 ## Task 8 (PLANNED)
 
 ### Goal
-Improve proxy resilience with health checks, failover, and request retry.
+Package the proxy as an installable CLI tool (`pdproxy`) with startup node discovery.
 
 ### Scope
 
-#### 8a: Backend health check
+#### 8a: CLI packaging
+- Add `pyproject.toml` (or `setup.py`) with `console_scripts` entry point:
+  ```
+  [project.scripts]
+  pdproxy = "core.MicroPDProxyServer:main"
+  ```
+- Install via `pip install .` (or `pip install -e .` for dev)
+- After install, `pdproxy` command is available system-wide
+
+#### 8b: CLI interface
+- `pdproxy --config proxy.yaml` or `pdproxy -c proxy.yaml` — start with YAML config
+- `PDPROXY_CONFIG=proxy.yaml pdproxy` — environment variable alternative
+- Default: search for `./pdproxy.yaml` in current directory if no config specified
+- Precedence: `--config` > `PDPROXY_CONFIG` env var > `./pdproxy.yaml`
+- `pdproxy --help` — show all available options
+- `pdproxy --version` — show version
+- `pdproxy --validate-config proxy.yaml` — validate YAML without starting server
+- Existing CLI arguments (`--model`, `--prefill`, `--decode`, etc.) continue to work for backward compatibility
+
+#### 8c: Startup node discovery
+- On startup, the proxy port opens immediately (uvicorn starts listening)
+- Before at least 1 prefill + 1 decode node are ready, return **503 Service Unavailable** for all business requests (with message "waiting for backend nodes")
+- Background task pings all configured prefill/decode nodes every `probe_interval_seconds` (default: 10s) on their `/health` endpoint
+- When a node responds healthy, add it to the active scheduling pool
+- Once minimum 1 prefill + 1 decode are ready → start accepting requests, log `"Proxy ready: N prefill, M decode nodes available"`
+- As more nodes come online, dynamically add them to the pool (log each: `"[3/16 decode nodes ready]"`)
+- If `wait_timeout_seconds` (default: 600 = 10 min) expires without minimum 1P+1D → exit with error
+
+#### YAML config additions
+```yaml
+startup:
+  wait_timeout_seconds: 600     # default: 600 (10 min), max wait for 1P+1D
+  probe_interval_seconds: 10    # default: 10
+```
+
+### Constraints
+- `pip install .` must work cleanly
+- Existing `python core/MicroPDProxyServer.py` invocation must still work
+- All existing tests must continue to pass
+- Startup discovery must not block the event loop
+
+### Testing / verification
+- UT for CLI argument parsing and config resolution (CLI > env > file > default)
+- UT for `--validate-config`
+- UT for startup discovery: mock nodes coming online gradually, verify 503 → 200 transition
+- UT for timeout: no nodes available → exit after timeout
+- Integration test: `pdproxy -c test.yaml` starts and serves requests
+- CI green
+
+---
+
+## Task 9 (PLANNED)
+
+### Goal
+Improve proxy resilience with health monitoring and failover.
+
+### Scope
+
+#### 9a: Backend health monitor
 - Periodically ping all prefill/decode backend nodes (e.g. every 10s)
 - Automatically remove unhealthy nodes from the active pool
 - Re-add nodes when they recover
 - Expose health status in `/status` endpoint
 
-#### 8b: Request failover
+#### 9b: Request failover
 - When a request to a backend node fails (connection error, timeout), automatically retry on the next available node
 - Configurable retry count and timeout via `core/config.py` (from Task 6)
 - Do not retry on client errors (4xx)
 
-#### 8c: Configurable scheduling policy
+#### 9c: Configurable scheduling policy
 - Allow selecting scheduling policy via config (`roundrobin` or `loadbalanced`)
 - Extensible for future scheduling strategies
 
