@@ -128,6 +128,11 @@ class CircuitBreaker:
             self._half_open_successes += 1
             if self._half_open_successes >= self.success_threshold:
                 self._close()
+            else:
+                # Probe succeeded but more probes needed before closing.
+                # Reset the pending flag so allow_request() can admit the
+                # next probe.
+                self._half_open_pending = False
             return
 
         if current == CircuitBreakerState.CLOSED:

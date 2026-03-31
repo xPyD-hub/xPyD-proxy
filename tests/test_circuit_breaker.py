@@ -182,6 +182,37 @@ class TestHalfOpenToClosed:
         cb.record_success()
         assert cb.state == CircuitBreakerState.CLOSED
 
+    def test_interleaved_allow_request_and_success(self):
+        """Realistic flow: allow_request() → record_success() per probe.
+
+        When success_threshold > 1, the pending flag must be reset after
+        each successful probe so that the next allow_request() is admitted.
+        """
+        cb, clock = _make_cb(
+            failure_threshold=2,
+            success_threshold=3,
+            timeout_duration_seconds=10,
+        )
+        cb.record_failure()
+        cb.record_failure()
+        clock.advance(10)
+        assert cb.state == CircuitBreakerState.HALF_OPEN
+
+        # Probe 1
+        assert cb.allow_request() is True
+        cb.record_success()
+        assert cb.state == CircuitBreakerState.HALF_OPEN
+
+        # Probe 2 — must be allowed (pending flag was reset)
+        assert cb.allow_request() is True
+        cb.record_success()
+        assert cb.state == CircuitBreakerState.HALF_OPEN
+
+        # Probe 3 — final probe closes the circuit
+        assert cb.allow_request() is True
+        cb.record_success()
+        assert cb.state == CircuitBreakerState.CLOSED
+
     def test_allows_requests_after_closing(self):
         cb, clock = _make_cb(
             failure_threshold=2,
@@ -245,7 +276,12 @@ class TestFullCycle:
         clock.advance(30)
         assert cb.state == CircuitBreakerState.HALF_OPEN
 
+        # Realistic probe flow: allow_request() → record_success()
+        assert cb.allow_request() is True
         cb.record_success()
+        assert cb.state == CircuitBreakerState.HALF_OPEN
+
+        assert cb.allow_request() is True
         cb.record_success()
         assert cb.state == CircuitBreakerState.CLOSED
 
