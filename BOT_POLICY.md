@@ -138,7 +138,15 @@ Types: `fix`, `feat`, `test`, `docs`, `refactor`, `chore`, `ci`.
 
 - Address all `REQUEST_CHANGES` feedback before requesting re-review.
 - Always push new commits to address feedback — do not amend or force-push.
+- **Reply to each addressed review comment** with a reference to the fix
+  commit (e.g. "Fixed in `abc1234`."). This makes it easy to distinguish
+  resolved comments from new ones.
+- **Re-request review** after pushing fixes — use the GitHub API or UI to
+  re-request from the reviewer(s) who requested changes. Do not wait for
+  the reviewer to notice the new commit on their own.
 - Keep PRs focused — one concern per PR.
+
+> These rules apply to **everyone** — bots and humans alike.
 
 ### Active PR Maintenance
 

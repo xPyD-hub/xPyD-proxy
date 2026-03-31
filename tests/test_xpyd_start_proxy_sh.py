@@ -9,13 +9,34 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "core" / "xpyd_start_proxy.sh"
 
+_MINIMAL_TOPO = [
+    "-pn",
+    "1",
+    "-pt",
+    "8",
+    "-pd",
+    "1",
+    "-pw",
+    "8",
+    "-dn",
+    "1",
+    "-dt",
+    "8",
+    "-dd",
+    "1",
+    "-dw",
+    "8",
+]
 
-def run_script(*args: str):
+
+def run_script(*args: str, env_overrides: dict | None = None):
     env = {
         **os.environ,
         "model_path": "dummy-model",
         "XPYD_DRY_RUN": "1",
     }
+    if env_overrides:
+        env.update(env_overrides)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         cwd=REPO_ROOT / "core",
@@ -266,3 +287,38 @@ def test_reject_zero_or_negative_argument():
     )
     assert result.returncode != 0
     assert "prefill nodes must be a positive integer" in result.stderr
+
+
+def test_model_cli_arg_overrides_env_var():
+    """--model CLI arg should override model_path env var."""
+    result = run_script(
+        *_MINIMAL_TOPO,
+        "--model",
+        "/cli/model/path",
+        env_overrides={"model_path": "/env/model/path"},
+    )
+    assert result.returncode == 0, result.stderr
+    cmd = extract_running_line(result.stdout)
+    assert "--model /cli/model/path" in cmd
+    assert "/env/model/path" not in cmd
+
+
+def test_model_env_var_fallback():
+    """When --model is not given, script should use model_path env var."""
+    result = run_script(
+        *_MINIMAL_TOPO,
+        env_overrides={"model_path": "/env/fallback/model"},
+    )
+    assert result.returncode == 0, result.stderr
+    cmd = extract_running_line(result.stdout)
+    assert "--model /env/fallback/model" in cmd
+
+
+def test_missing_model_errors():
+    """When neither --model nor model_path env var is set, script should fail."""
+    result = run_script(
+        *_MINIMAL_TOPO,
+        env_overrides={"model_path": ""},
+    )
+    assert result.returncode != 0
+    assert "model path is not set" in result.stderr
