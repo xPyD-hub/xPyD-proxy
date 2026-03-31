@@ -24,7 +24,9 @@ token for reviews.** The author's token is for authoring PRs only.
 2. **Skip already-reviewed commits** — if the PR head SHA has not changed since
    your last review, do not submit a duplicate review.
 3. **One review per PR per commit SHA** — never submit multiple reviews for the
-   same commit.
+   same commit. If you submitted `CHANGES_REQUESTED` on a commit, do **not**
+   submit `APPROVE` on the same commit — wait for the author to push a new
+   commit that addresses the feedback, then re-review the new commit.
 
 ### Review Standard
 
@@ -150,7 +152,11 @@ there are open (non-draft) PRs authored by the bot. On each trigger it must:
    green. Do not wait for reviewers to point out CI failures — fix them
    proactively.
 3. **Review comment check** — read any new `CHANGES_REQUESTED` reviews or
-   inline comments. For each piece of feedback:
+   inline comments. **Do not just check the latest review status** — even if
+   a later reviewer submitted `APPROVE`, examine every `CHANGES_REQUESTED`
+   review and verify that the specific code issues raised have been addressed
+   by a subsequent commit. If a review points out a real code bug and no fix
+   commit exists, you must fix the code. For each piece of feedback:
    - Fix the code accordingly.
    - Run pre-commit, tests, and linters locally before pushing.
    - Push a new commit (not amend/force-push over the reviewed commit).
