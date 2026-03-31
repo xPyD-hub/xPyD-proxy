@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
+
+try:
+    from circuit_breaker import CircuitBreaker, CircuitBreakerState
+except ImportError:
+    from .circuit_breaker import CircuitBreaker, CircuitBreakerState
 
 
 class InstanceStatus(str, Enum):
@@ -22,26 +27,32 @@ class InstanceStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-class CircuitBreakerState(str, Enum):
-    """Circuit breaker state machine states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-
 @dataclass
 class InstanceInfo:
-    """Per-instance state tracked by the registry."""
+    """Read-only snapshot of per-instance state returned by the registry.
+
+    This is a pure data snapshot — it does **not** hold a reference to any
+    mutable internal object such as a ``CircuitBreaker``.
+    """
 
     address: str
     role: str  # "prefill" or "decode"
     status: InstanceStatus = InstanceStatus.UNKNOWN
-    circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
     last_health_check: Optional[float] = None
     active_request_count: int = 0
-    consecutive_failures: int = 0
-    consecutive_successes: int = 0
+    circuit_breaker_state: CircuitBreakerState = CircuitBreakerState.CLOSED
+
+
+@dataclass
+class _InstanceRecord:
+    """Internal mutable record stored inside the registry."""
+
+    address: str
+    role: str
+    status: InstanceStatus = InstanceStatus.UNKNOWN
+    last_health_check: Optional[float] = None
+    active_request_count: int = 0
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
 
 
 class InstanceRegistry:
@@ -50,9 +61,23 @@ class InstanceRegistry:
     All access is protected by a reentrant lock for thread safety.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        clock: Optional[Callable[[], float]] = None,
+        cb_enabled: bool = False,
+        failure_threshold: int = 5,
+        success_threshold: int = 2,
+        timeout_duration_seconds: float = 30,
+        window_duration_seconds: float = 60,
+    ) -> None:
         self._lock = threading.RLock()
-        self._instances: Dict[str, InstanceInfo] = {}
+        self._instances: Dict[str, _InstanceRecord] = {}
+        self._clock = clock
+        self._cb_enabled = cb_enabled
+        self._cb_failure_threshold = failure_threshold
+        self._cb_success_threshold = success_threshold
+        self._cb_timeout_duration_seconds = timeout_duration_seconds
+        self._cb_window_duration_seconds = window_duration_seconds
 
     def add(self, role: str, address: str) -> None:
         """Register an instance with the given role and address.
@@ -70,7 +95,17 @@ class InstanceRegistry:
         with self._lock:
             if address in self._instances:
                 raise ValueError(f"Instance {address!r} is already registered.")
-            self._instances[address] = InstanceInfo(address=address, role=role)
+            self._instances[address] = _InstanceRecord(
+                address=address,
+                role=role,
+                circuit_breaker=CircuitBreaker(
+                    failure_threshold=self._cb_failure_threshold,
+                    success_threshold=self._cb_success_threshold,
+                    timeout_duration_seconds=self._cb_timeout_duration_seconds,
+                    window_duration_seconds=self._cb_window_duration_seconds,
+                    clock=self._clock,
+                ),
+            )
 
     def remove(self, address: str) -> None:
         """Remove an instance from the registry.
@@ -98,13 +133,19 @@ class InstanceRegistry:
             circuit-breaker probe mechanism and excluded here.
         """
         with self._lock:
-            return [
-                instance.address
-                for instance in self._instances.values()
-                if instance.role == role
-                and instance.status == InstanceStatus.HEALTHY
-                and instance.circuit_breaker_state == CircuitBreakerState.CLOSED
-            ]
+            results = []
+            for instance in self._instances.values():
+                if instance.role != role:
+                    continue
+                if instance.status != InstanceStatus.HEALTHY:
+                    continue
+                if (
+                    self._cb_enabled
+                    and instance.circuit_breaker.state != CircuitBreakerState.CLOSED
+                ):
+                    continue
+                results.append(instance.address)
+            return results
 
     def mark_healthy(self, address: str) -> None:
         """Mark an instance as healthy (called by health monitor).
@@ -137,7 +178,7 @@ class InstanceRegistry:
     def record_success(self, address: str) -> None:
         """Record a successful request to an instance.
 
-        Resets consecutive failure count and increments success count.
+        Delegates to the instance's CircuitBreaker.
 
         Args:
             address: Instance address.
@@ -147,13 +188,12 @@ class InstanceRegistry:
         """
         with self._lock:
             instance = self._get_instance(address)
-            instance.consecutive_failures = 0
-            instance.consecutive_successes += 1
+            instance.circuit_breaker.record_success()
 
     def record_failure(self, address: str) -> None:
         """Record a failed request to an instance.
 
-        Resets consecutive success count and increments failure count.
+        Delegates to the instance's CircuitBreaker.
 
         Args:
             address: Instance address.
@@ -163,8 +203,7 @@ class InstanceRegistry:
         """
         with self._lock:
             instance = self._get_instance(address)
-            instance.consecutive_successes = 0
-            instance.consecutive_failures += 1
+            instance.circuit_breaker.record_failure()
 
     def get_instance_info(self, address: str) -> InstanceInfo:
         """Return a snapshot of instance info.
@@ -184,11 +223,9 @@ class InstanceRegistry:
                 address=instance.address,
                 role=instance.role,
                 status=instance.status,
-                circuit_breaker_state=instance.circuit_breaker_state,
                 last_health_check=instance.last_health_check,
                 active_request_count=instance.active_request_count,
-                consecutive_failures=instance.consecutive_failures,
-                consecutive_successes=instance.consecutive_successes,
+                circuit_breaker_state=instance.circuit_breaker.state,
             )
 
     def get_all_instances(self) -> List[InstanceInfo]:
@@ -199,22 +236,6 @@ class InstanceRegistry:
         """
         with self._lock:
             return [self.get_instance_info(addr) for addr in self._instances]
-
-    def set_circuit_breaker_state(
-        self, address: str, state: CircuitBreakerState
-    ) -> None:
-        """Update the circuit breaker state for an instance.
-
-        Args:
-            address: Instance address.
-            state: New circuit breaker state.
-
-        Raises:
-            KeyError: If address is not registered.
-        """
-        with self._lock:
-            instance = self._get_instance(address)
-            instance.circuit_breaker_state = state
 
     def increment_active_requests(self, address: str) -> None:
         """Increment the active request count for an instance.
@@ -242,7 +263,7 @@ class InstanceRegistry:
             instance = self._get_instance(address)
             instance.active_request_count = max(0, instance.active_request_count - 1)
 
-    def _get_instance(self, address: str) -> InstanceInfo:
+    def _get_instance(self, address: str) -> _InstanceRecord:
         """Get instance by address or raise KeyError. Must hold lock."""
         try:
             return self._instances[address]
