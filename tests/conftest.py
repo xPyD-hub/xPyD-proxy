@@ -67,6 +67,12 @@ def _make_proxy_app():
 
 
 @pytest.fixture
+def dummy_ports():
+    """Expose dummy-node ports so other test modules can use them."""
+    return _PREFILL_PORT, _DECODE_PORT
+
+
+@pytest.fixture
 def anyio_backend():
     return "asyncio"
 

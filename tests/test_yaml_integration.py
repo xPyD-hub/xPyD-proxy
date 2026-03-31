@@ -18,11 +18,9 @@ _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
 
 
 @pytest.fixture
-def _ports():
-    """Get the dummy node ports from conftest (already running)."""
-    import conftest
-
-    return conftest._PREFILL_PORT, conftest._DECODE_PORT
+def _ports(dummy_ports):
+    """Get the dummy node ports from conftest fixture."""
+    return dummy_ports
 
 
 def _make_proxy_from_yaml(yaml_content: str, tmp_path: Path) -> Proxy:
