@@ -6,13 +6,7 @@ import concurrent.futures
 import threading
 
 import pytest
-
-from registry import (
-    CircuitBreakerState,
-    InstanceRegistry,
-    NodeStatus,
-)
-
+from registry import CircuitBreakerState, InstanceRegistry, NodeStatus
 
 # ---------------------------------------------------------------------------
 # Add / Remove
@@ -111,9 +105,7 @@ class TestGetAvailableNodes:
         reg = InstanceRegistry()
         reg.add("decode", "10.0.0.1:8200")
         reg.mark_healthy("10.0.0.1:8200")
-        reg.set_circuit_breaker_state(
-            "10.0.0.1:8200", CircuitBreakerState.HALF_OPEN
-        )
+        reg.set_circuit_breaker_state("10.0.0.1:8200", CircuitBreakerState.HALF_OPEN)
         assert reg.get_available_nodes("decode") == ["10.0.0.1:8200"]
 
     def test_role_filtering(self) -> None:
