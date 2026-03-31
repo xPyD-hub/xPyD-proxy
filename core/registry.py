@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
+try:
+    from circuit_breaker import CircuitBreakerState
+except ImportError:
+    from .circuit_breaker import CircuitBreakerState
+
 
 class InstanceStatus(str, Enum):
     """Health status of an instance."""
@@ -20,14 +25,6 @@ class InstanceStatus(str, Enum):
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
     UNKNOWN = "unknown"
-
-
-class CircuitBreakerState(str, Enum):
-    """Circuit breaker state machine states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
 
 
 @dataclass
