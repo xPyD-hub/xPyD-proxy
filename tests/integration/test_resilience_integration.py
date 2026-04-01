@@ -18,7 +18,7 @@ from MicroPDProxyServer import Proxy, RoundRobinSchedulingPolicy
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
 
 

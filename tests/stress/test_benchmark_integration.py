@@ -20,7 +20,9 @@ import time
 import httpx
 import pytest
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 MODEL_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
 
 NUM_PREFILL = 2

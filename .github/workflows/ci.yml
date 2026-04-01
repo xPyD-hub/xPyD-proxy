@@ -29,7 +29,7 @@ jobs:
       - name: Run tests
         run: |
           PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
-            python -m pytest tests/ -v --tb=short -m "not benchmark"
+            python -m pytest tests/unit/ tests/integration/ -v --tb=short
 
   lint:
     runs-on: ubuntu-latest
@@ -81,7 +81,7 @@ jobs:
         run: |
           pip install pytest pytest-asyncio aiohttp requests
           PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
-            python -m pytest tests/test_cli_and_discovery.py -v --tb=short
+            python -m pytest tests/integration/test_cli_and_discovery.py -v --tb=short
 
   benchmark:
     runs-on: ubuntu-latest
@@ -101,4 +101,4 @@ jobs:
       - name: Run benchmark tests
         run: |
           PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
-            python -m pytest tests/ -v --tb=short -m benchmark -s
+            python -m pytest tests/stress/ -v --tb=short -s
