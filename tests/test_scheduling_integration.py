@@ -63,7 +63,7 @@ class TestCacheAwarePolicy:
         policy = CacheAwarePolicy(workers=["w1", "w2"])
         policy.add_worker("w3")
         selected = {policy.select(prompt=f"p{i}") for i in range(100)}
-        assert "w3" in selected or len(selected) >= 1
+        assert "w3" in selected
         policy.remove_worker("w3")
         # After removal, w3 should never be selected
         for i in range(50):

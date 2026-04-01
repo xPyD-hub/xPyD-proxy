@@ -21,6 +21,7 @@ import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     field_validator,
     model_validator,
 )
@@ -71,7 +72,7 @@ class ProxyConfig(BaseModel):
     generator_on_p_node: bool = False
     roundrobin: bool = False
     scheduling: str = "loadbalanced"
-    scheduling_config: Dict[str, Any] = {}
+    scheduling_config: Dict[str, Any] = Field(default_factory=dict)
     admin_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     wait_timeout_seconds: int = 600
