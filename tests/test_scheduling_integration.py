@@ -297,3 +297,92 @@ class TestBackwardCompatibility:
         r1 = policy.schedule(cycler, prompt="same prefix " * 100)
         r2 = policy.schedule(cycler, prompt="same prefix " * 100)
         assert r1 == r2
+
+
+# ------------------------------------------------------------------ #
+# select_from — role-filtered ring routing
+# ------------------------------------------------------------------ #
+
+
+class TestConsistentHashSelectFrom:
+    """Tests for ConsistentHashPolicy.select_from."""
+
+    def test_normal_selection(self):
+        policy = ConsistentHashPolicy(workers=["w1", "w2", "w3"])
+        result = policy.select_from({"w1", "w2"}, header="sess-1")
+        assert result in {"w1", "w2"}
+
+    def test_empty_candidates(self):
+        policy = ConsistentHashPolicy(workers=["w1", "w2", "w3"])
+        assert policy.select_from(set(), header="sess-1") is None
+
+    def test_deterministic(self):
+        policy = ConsistentHashPolicy(workers=["w1", "w2", "w3"])
+        r1 = policy.select_from({"w1", "w2"}, header="sess-1")
+        r2 = policy.select_from({"w1", "w2"}, header="sess-1")
+        assert r1 == r2
+
+    def test_all_candidates(self):
+        policy = ConsistentHashPolicy(workers=["w1", "w2", "w3"])
+        result = policy.select_from({"w1", "w2", "w3"}, header="sess-1")
+        assert result in {"w1", "w2", "w3"}
+
+    def test_schedule_role_filtered(self):
+        """schedule(is_prompt=True/False) routes to different role pools."""
+        from registry import InstanceRegistry
+
+        reg = InstanceRegistry()
+        for p in ["p1", "p2"]:
+            reg.add("prefill", p)
+            reg.mark_healthy(p)
+        for d in ["d1", "d2"]:
+            reg.add("decode", d)
+            reg.mark_healthy(d)
+        policy = ConsistentHashPolicy(workers=["p1", "p2", "d1", "d2"], registry=reg)
+        cycler = itertools.cycle(["p1", "p2", "d1", "d2"])
+        prefill = policy.schedule(cycler, is_prompt=True, header="sess-1")
+        decode = policy.schedule(cycler, is_prompt=False, header="sess-1")
+        assert prefill in {"p1", "p2"}
+        assert decode in {"d1", "d2"}
+
+
+class TestCacheAwareSelectFrom:
+    """Tests for CacheAwarePolicy.select_from."""
+
+    def test_normal_selection(self):
+        policy = CacheAwarePolicy(workers=["w1", "w2", "w3"])
+        result = policy.select_from({"w1", "w2"}, prompt="hello world")
+        assert result in {"w1", "w2"}
+
+    def test_empty_candidates(self):
+        policy = CacheAwarePolicy(workers=["w1", "w2", "w3"])
+        assert policy.select_from(set(), prompt="hello") is None
+
+    def test_deterministic(self):
+        policy = CacheAwarePolicy(workers=["w1", "w2", "w3"])
+        r1 = policy.select_from({"w1", "w2"}, prompt="hello world")
+        r2 = policy.select_from({"w1", "w2"}, prompt="hello world")
+        assert r1 == r2
+
+    def test_all_candidates(self):
+        policy = CacheAwarePolicy(workers=["w1", "w2", "w3"])
+        result = policy.select_from({"w1", "w2", "w3"}, prompt="test")
+        assert result in {"w1", "w2", "w3"}
+
+    def test_schedule_role_filtered(self):
+        """schedule(is_prompt=True/False) routes to different role pools."""
+        from registry import InstanceRegistry
+
+        reg = InstanceRegistry()
+        for p in ["p1", "p2"]:
+            reg.add("prefill", p)
+            reg.mark_healthy(p)
+        for d in ["d1", "d2"]:
+            reg.add("decode", d)
+            reg.mark_healthy(d)
+        policy = CacheAwarePolicy(workers=["p1", "p2", "d1", "d2"], registry=reg)
+        cycler = itertools.cycle(["p1", "p2", "d1", "d2"])
+        prefill = policy.schedule(cycler, is_prompt=True, prompt="hello")
+        decode = policy.schedule(cycler, is_prompt=False, prompt="hello")
+        assert prefill in {"p1", "p2"}
+        assert decode in {"d1", "d2"}

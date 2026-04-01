@@ -85,6 +85,22 @@ class ConsistentHashRing:
     def __len__(self) -> int:
         return len(self._workers)
 
+    def lookup_from(self, key: int, candidates: set[str]) -> Optional[str]:
+        """Find the nearest clockwise worker that belongs to *candidates*.
+
+        Returns ``None`` when the ring is empty or no candidate is found.
+        """
+        if not self._ring_keys or not candidates:
+            return None
+        start = bisect.bisect_right(self._ring_keys, key)
+        n = len(self._ring_keys)
+        for i in range(n):
+            idx = (start + i) % n
+            worker = self._ring_workers[idx]
+            if worker in candidates:
+                return worker
+        return None
+
 
 class CacheAwarePolicy(SchedulingPolicy):
     """Route requests to workers based on prompt prefix hash.
@@ -197,20 +213,7 @@ class CacheAwarePolicy(SchedulingPolicy):
             if prompt is None:
                 prompt = ""
             h = self._prefix_hash(prompt)
-            # Walk the ring to find a candidate
-            ring = self._ring
-            if not ring._ring_keys:
-                return None
-            start = bisect.bisect_right(ring._ring_keys, h)
-            if start == len(ring._ring_keys):
-                start = 0
-            n = len(ring._ring_keys)
-            for i in range(n):
-                idx = (start + i) % n
-                worker = ring._ring_workers[idx]
-                if worker in candidates:
-                    return worker
-            return None
+            return self._ring.lookup_from(h, candidates)
 
     def schedule(
         self,
