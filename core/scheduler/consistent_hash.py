@@ -30,8 +30,9 @@ class ConsistentHashPolicy(SchedulingPolicy):
         self,
         workers: Optional[list[str]] = None,
         virtual_nodes: int = DEFAULT_VIRTUAL_NODES,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self._virtual_nodes = virtual_nodes
         # Sorted list of hash values; _ring_map maps hash → worker address.
         self._ring_keys: list[int] = []
@@ -143,7 +144,12 @@ class ConsistentHashPolicy(SchedulingPolicy):
 
         Key priority: header (X-Session-ID) > user > client_ip > session_id.
         Falls back to ``"__default__"`` only when no context is provided.
+
+        Advanced policies only manage decode workers.  For prefill
+        (``is_prompt=True``) fall back to the round-robin *cycler*.
         """
+        if is_prompt:
+            return next(cycler)
         return self.select(
             header=header,
             session_id=session_id,

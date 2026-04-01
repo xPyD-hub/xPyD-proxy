@@ -112,8 +112,9 @@ class CacheAwarePolicy(SchedulingPolicy):
         workers: Optional[list[str]] = None,
         prefix_length: int = DEFAULT_PREFIX_LENGTH,
         tokenizer: Any = None,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self._prefix_length = prefix_length
         self._tokenizer = tokenizer
         self._ring = ConsistentHashRing(vnodes=VIRTUAL_NODES_PER_WORKER)
@@ -194,5 +195,10 @@ class CacheAwarePolicy(SchedulingPolicy):
         Router integration (extracting prompt from the HTTP request and
         passing it here) is deferred to a follow-up integration PR.
         Without it, requests fall back to empty-string hashing.
+
+        Advanced policies only manage decode workers.  For prefill
+        (``is_prompt=True``) fall back to the round-robin *cycler*.
         """
+        if is_prompt:
+            return next(cycler)
         return self.select(prompt=prompt)

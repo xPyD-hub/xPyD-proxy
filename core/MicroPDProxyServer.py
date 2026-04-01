@@ -962,37 +962,18 @@ def _create_scheduling_policy(
     if strategy == "roundrobin":
         return RoundRobinSchedulingPolicy(registry=registry)
 
-    # Registry-based advanced strategies
-    if strategy == "consistent_hash":
+    # Registry-based advanced strategies (decode-only, prefill uses cycler)
+    if default_registry.has(strategy):
         policy = default_registry.create(
-            "consistent_hash",
+            strategy,
             workers=list(config.decode),
+            registry=registry,
             **strategy_opts,
         )
-        policy.registry = registry
-        return policy
-
-    if strategy == "power_of_two":
-        policy = default_registry.create(
-            "power_of_two",
-            workers=list(config.decode),
-            **strategy_opts,
-        )
-        policy.registry = registry
-        return policy
-
-    if strategy == "cache_aware":
-        policy = default_registry.create(
-            "cache_aware",
-            workers=list(config.decode),
-            **strategy_opts,
-        )
-        policy.registry = registry
         return policy
 
     # Fallback: try registry anyway
-    policy = default_registry.create(strategy, **strategy_opts)
-    policy.registry = registry
+    policy = default_registry.create(strategy, registry=registry, **strategy_opts)
     return policy
 
 

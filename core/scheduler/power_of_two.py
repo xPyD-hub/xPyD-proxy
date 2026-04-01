@@ -119,7 +119,12 @@ class PowerOfTwoPolicy(SchedulingPolicy):
 
         If a registry is attached, refreshes the worker list and load
         from available instances before selecting.
+
+        Advanced policies only manage decode workers.  For prefill
+        (``is_prompt=True``) fall back to the round-robin *cycler*.
         """
+        if is_prompt:
+            return next(cycler)
         if self._registry is not None:
             available = self._registry.get_available_instances("decode")
             with self.lock:
