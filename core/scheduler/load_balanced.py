@@ -37,7 +37,7 @@ except ImportError:
 class LoadBalancedScheduler(SchedulingPolicy):
     """Select the least-loaded instance, respecting model-length limits."""
 
-    def __init__(self, prefill_instances: list[str], decode_instances: list[str]):
+    def __init__(self, prefill_instances: list[str], decode_instances: list[str], registry=None):
         self.prefill_utils_counter = [0] * len(prefill_instances)
         self.prefill_bs_counter = [0] * len(prefill_instances)
         self.decode_kv_utils_counter = [0] * len(decode_instances)
@@ -68,7 +68,7 @@ class LoadBalancedScheduler(SchedulingPolicy):
 
         logger.info("Prefill instance model lens: %s", self.prefill_model_len)
         logger.info("Decode instance model lens: %s", self.decode_model_len)
-        super().__init__()
+        super().__init__(registry=registry)
 
     def schedule(
         self,
@@ -84,10 +84,14 @@ class LoadBalancedScheduler(SchedulingPolicy):
                 return self._schedule_decode(request_len, max_tokens)
 
     def _schedule_prefill(self, request_len, max_tokens):
+        available = None
+        if self._registry is not None:
+            available = set(self._registry.get_available_instances("prefill"))
         candidates = [
             i
             for i, max_len in enumerate(self.prefill_model_len)
             if request_len + max_tokens <= max_len
+            and (available is None or self.prefill_instances[i] in available)
         ]
         if not candidates:
             log_info_red(
@@ -112,10 +116,14 @@ class LoadBalancedScheduler(SchedulingPolicy):
         return self.prefill_instances[min_index]
 
     def _schedule_decode(self, request_len, max_tokens):
+        available = None
+        if self._registry is not None:
+            available = set(self._registry.get_available_instances("decode"))
         candidates = [
             i
             for i, max_len in enumerate(self.decode_model_len)
             if request_len + max_tokens <= max_len
+            and (available is None or self.decode_instances[i] in available)
         ]
         if not candidates:
             log_info_red(
