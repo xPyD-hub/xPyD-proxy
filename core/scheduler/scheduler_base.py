@@ -32,6 +32,7 @@ class SchedulingPolicy(ABC):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        **kwargs,
     ) -> Optional[str]:
         raise NotImplementedError("Scheduling policy is not set.")
 

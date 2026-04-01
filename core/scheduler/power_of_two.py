@@ -113,14 +113,18 @@ class PowerOfTwoPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using power-of-two-choices.
 
         If a registry is attached, refreshes the worker list and load
-        from available instances before selecting.
+        from available instances for the appropriate role before
+        selecting.  Both prefill and decode requests are routed
+        through the power-of-two algorithm.
         """
         if self._registry is not None:
-            available = self._registry.get_available("decode")
+            role = "prefill" if is_prompt else "decode"
+            available = self._registry.get_available_instances(role)
             with self.lock:
                 self._workers = list(available)
                 # Sync load from registry where possible

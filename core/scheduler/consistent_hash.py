@@ -30,8 +30,9 @@ class ConsistentHashPolicy(SchedulingPolicy):
         self,
         workers: Optional[list[str]] = None,
         virtual_nodes: int = DEFAULT_VIRTUAL_NODES,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self._virtual_nodes = virtual_nodes
         # Sorted list of hash values; _ring_map maps hash → worker address.
         self._ring_keys: list[int] = []
@@ -127,6 +128,38 @@ class ConsistentHashPolicy(SchedulingPolicy):
     # SchedulingPolicy interface (for integration with existing router)
     # ------------------------------------------------------------------
 
+    def select_from(
+        self,
+        candidates: set[str],
+        *,
+        header: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user: Optional[str] = None,
+        client_ip: Optional[str] = None,
+    ) -> Optional[str]:
+        """Select a worker from *candidates* using consistent hashing.
+
+        Walks the ring clockwise from the hash point and returns the
+        first worker that belongs to *candidates*.  Returns ``None``
+        when no candidate is found.
+        """
+        key = header or user or client_ip or session_id
+        if key is None:
+            key = "__default__"
+
+        with self.lock:
+            if not self._ring_keys or not candidates:
+                return None
+            h = int(hashlib.md5(key.encode()).hexdigest(), 16)  # noqa: S324
+            start = bisect_right(self._ring_keys, h) % len(self._ring_keys)
+            n = len(self._ring_keys)
+            for i in range(n):
+                idx = (start + i) % n
+                worker = self._ring_map[self._ring_keys[idx]]
+                if worker in candidates:
+                    return worker
+            return None
+
     def schedule(
         self,
         cycler: itertools.cycle,
@@ -138,12 +171,30 @@ class ConsistentHashPolicy(SchedulingPolicy):
         session_id: Optional[str] = None,
         user: Optional[str] = None,
         client_ip: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using request context for consistent hashing.
 
         Key priority: header (X-Session-ID) > user > client_ip > session_id.
         Falls back to ``"__default__"`` only when no context is provided.
+
+        Both prefill and decode requests are routed through the hash
+        ring.  When a registry is attached, the ring contains all
+        workers and results are filtered to the appropriate role.
         """
+        if self._registry is not None:
+            role = "prefill" if is_prompt else "decode"
+            candidates = set(self._registry.get_available_instances(role))
+            if candidates:
+                return self.select_from(
+                    candidates,
+                    header=header,
+                    session_id=session_id,
+                    user=user,
+                    client_ip=client_ip,
+                )
+            # No candidates for this role in registry – fall back to cycler
+            return next(cycler)
         return self.select(
             header=header,
             session_id=session_id,

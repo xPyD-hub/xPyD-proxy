@@ -85,6 +85,22 @@ class ConsistentHashRing:
     def __len__(self) -> int:
         return len(self._workers)
 
+    def lookup_from(self, key: int, candidates: set[str]) -> Optional[str]:
+        """Find the nearest clockwise worker that belongs to *candidates*.
+
+        Returns ``None`` when the ring is empty or no candidate is found.
+        """
+        if not self._ring_keys or not candidates:
+            return None
+        start = bisect.bisect_right(self._ring_keys, key)
+        n = len(self._ring_keys)
+        for i in range(n):
+            idx = (start + i) % n
+            worker = self._ring_workers[idx]
+            if worker in candidates:
+                return worker
+        return None
+
 
 class CacheAwarePolicy(SchedulingPolicy):
     """Route requests to workers based on prompt prefix hash.
@@ -112,8 +128,9 @@ class CacheAwarePolicy(SchedulingPolicy):
         workers: Optional[list[str]] = None,
         prefix_length: int = DEFAULT_PREFIX_LENGTH,
         tokenizer: Any = None,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self._prefix_length = prefix_length
         self._tokenizer = tokenizer
         self._ring = ConsistentHashRing(vnodes=VIRTUAL_NODES_PER_WORKER)
@@ -179,6 +196,25 @@ class CacheAwarePolicy(SchedulingPolicy):
     # SchedulingPolicy interface
     # ------------------------------------------------------------------
 
+    def select_from(
+        self,
+        candidates: set[str],
+        *,
+        prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        """Select a worker from *candidates* using cache-aware routing.
+
+        Walks the ring clockwise from the prefix hash and returns the
+        first worker that belongs to *candidates*.
+        """
+        with self.lock:
+            if len(self._ring) == 0 or not candidates:
+                return None
+            if prompt is None:
+                prompt = ""
+            h = self._prefix_hash(prompt)
+            return self._ring.lookup_from(h, candidates)
+
     def schedule(
         self,
         cycler: itertools.cycle,
@@ -187,12 +223,21 @@ class CacheAwarePolicy(SchedulingPolicy):
         max_tokens: Optional[int] = None,
         *,
         prompt: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using prompt prefix for cache-aware routing.
 
-        The ``prompt`` keyword arg is not passed by the current proxy router.
-        Router integration (extracting prompt from the HTTP request and
-        passing it here) is deferred to a follow-up integration PR.
-        Without it, requests fall back to empty-string hashing.
+        The *is_prompt* flag is passed by the router to distinguish
+        prefill from decode phases.  Both phases are routed through
+        cache-aware hashing.  When a registry is attached, the ring
+        contains all workers and results are filtered to the
+        appropriate role based on *is_prompt*.
         """
+        if self._registry is not None:
+            role = "prefill" if is_prompt else "decode"
+            candidates = set(self._registry.get_available_instances(role))
+            if candidates:
+                return self.select_from(candidates, prompt=prompt)
+            # No candidates for this role – fall back to cycler
+            return next(cycler)
         return self.select(prompt=prompt)

@@ -30,6 +30,7 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        **kwargs,
     ) -> Optional[str]:
         if self._registry is not None:
             role = "prefill" if is_prompt else "decode"
