@@ -38,6 +38,11 @@ class CircuitBreakerConfig(BaseModel):
     window_duration_seconds: int = 60
 
 try:
+    from .resilience import ResilienceConfig
+except ImportError:
+    from resilience import ResilienceConfig
+
+try:
     from .topology import expand_topology
 except ImportError:
     from topology import expand_topology
@@ -71,6 +76,7 @@ class ProxyConfig(BaseModel):
     probe_interval_seconds: int = 10
     health_check: HealthCheckConfig = HealthCheckConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
+    retry: ResilienceConfig = ResilienceConfig()
 
     # ------------------------------------------------------------------
     # Validators
@@ -264,6 +270,15 @@ class ProxyConfig(BaseModel):
             health_cfg = HealthCheckConfig(**health_check_raw)
             yaml_data["health_check"] = health_cfg
 
+        # 1e. Handle nested 'retry' section
+        retry_raw = yaml_data.pop("retry", None)
+        if retry_raw is not None:
+            if not isinstance(retry_raw, dict):
+                raise ValueError(
+                    f"'retry' must be a mapping, "
+                    f"got {type(retry_raw).__name__}"
+                )
+
         # 2. Pop YAML-only keys that don't map directly to ProxyConfig fields
         scheduling = yaml_data.pop("scheduling", None)
         admin_api_key_yaml = yaml_data.pop("admin_api_key", None)
@@ -323,5 +338,9 @@ class ProxyConfig(BaseModel):
             merged["circuit_breaker"] = CircuitBreakerConfig(
                 **circuit_breaker_yaml
             )
+
+        # 8. Retry config (YAML only, no CLI override)
+        if retry_raw is not None:
+            merged["retry"] = ResilienceConfig(**retry_raw)
 
         return cls(**merged)
