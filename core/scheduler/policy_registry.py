@@ -7,6 +7,10 @@ import logging
 from typing import Any
 
 from .cache_aware import CacheAwarePolicy
+<<<<<<< HEAD
+=======
+from .consistent_hash import ConsistentHashPolicy
+>>>>>>> d0719f7 (feat: Task 10 integration — wire advanced scheduling policies into proxy router)
 from .load_balanced import LoadBalancedScheduler
 from .power_of_two import PowerOfTwoPolicy
 from .round_robin import RoundRobinSchedulingPolicy
@@ -77,8 +81,7 @@ def _build_default_registry() -> PolicyRegistry:
     registry.register("loadbalanced", LoadBalancedScheduler)
 
     # Future policies — placeholders registered when their classes exist.
-    # Uncomment each line once the corresponding module is implemented:
-    # registry.register("consistent_hash", ConsistentHashPolicy)
+    registry.register("consistent_hash", ConsistentHashPolicy)
     registry.register("power_of_two", PowerOfTwoPolicy)
     registry.register("cache_aware", CacheAwarePolicy)
 

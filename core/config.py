@@ -70,6 +70,8 @@ class ProxyConfig(BaseModel):
     log_level: str = "warning"
     generator_on_p_node: bool = False
     roundrobin: bool = False
+    scheduling: str = "loadbalanced"
+    scheduling_config: Dict[str, Any] = {}
     admin_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     wait_timeout_seconds: int = 600
@@ -285,6 +287,21 @@ class ProxyConfig(BaseModel):
         openai_api_key_yaml = yaml_data.pop("openai_api_key", None)
         circuit_breaker_yaml = yaml_data.pop("circuit_breaker", None)
 
+        # 2b. Pop strategy-specific config sections
+        _STRATEGY_NAMES = {
+            "consistent_hash", "power_of_two", "cache_aware",
+        }
+        scheduling_config: Dict[str, Any] = {}
+        for strategy_name in _STRATEGY_NAMES:
+            strategy_section = yaml_data.pop(strategy_name, None)
+            if strategy_section is not None:
+                if not isinstance(strategy_section, dict):
+                    raise ValueError(
+                        f"'{strategy_name}' must be a mapping, "
+                        f"got {type(strategy_section).__name__}"
+                    )
+                scheduling_config[strategy_name] = strategy_section
+
         # 3. Reject unknown YAML keys early
         known_fields = set(_arg_defaults.keys()) | {"health_check"}
         unknown = set(yaml_data.keys()) - known_fields
@@ -306,8 +323,11 @@ class ProxyConfig(BaseModel):
             elif field_name in yaml_data:
                 merged[field_name] = yaml_data[field_name]
 
-        # 5. scheduling → roundrobin mapping
-        _VALID_SCHEDULING = {"roundrobin", "loadbalanced"}
+        # 5. scheduling → roundrobin mapping + new policy support
+        _VALID_SCHEDULING = {
+            "roundrobin", "loadbalanced",
+            "consistent_hash", "power_of_two", "cache_aware",
+        }
         if scheduling is not None:
             if scheduling not in _VALID_SCHEDULING:
                 raise ValueError(
@@ -316,6 +336,16 @@ class ProxyConfig(BaseModel):
                 )
             if "roundrobin" not in merged:
                 merged["roundrobin"] = scheduling == "roundrobin"
+            merged["scheduling"] = scheduling
+        else:
+            # Default: if roundrobin flag is set use it, otherwise
+            # loadbalanced
+            if merged.get("roundrobin"):
+                merged["scheduling"] = "roundrobin"
+
+        # Attach strategy-specific config
+        if scheduling_config:
+            merged["scheduling_config"] = scheduling_config
 
         # 6. Environment variables override YAML for api keys.
         #    Use `is not None` so an explicit empty-string env var

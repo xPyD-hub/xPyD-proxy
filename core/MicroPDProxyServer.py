@@ -41,6 +41,7 @@ try:
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
         SchedulingPolicy,
+        default_registry,
     )
 except ImportError:
     from config import ProxyConfig
@@ -52,6 +53,7 @@ except ImportError:
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
         SchedulingPolicy,
+        default_registry,
     )
 
 formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
@@ -543,8 +545,11 @@ class Proxy:
                  cycler: itertools.cycle,
                  is_prompt: int = None,
                  request_len: Optional[int] = None,
-                 max_tokens: Optional[int] = None) -> str:
-        return self.scheduling_policy.schedule(cycler, is_prompt, request_len, max_tokens)
+                 max_tokens: Optional[int] = None,
+                 **kwargs) -> str:
+        return self.scheduling_policy.schedule(
+            cycler, is_prompt, request_len, max_tokens, **kwargs,
+        )
 
     def schedule_completion(self,
                             prefill_instance: str = None,
@@ -652,15 +657,33 @@ class Proxy:
                 f"tokenizer took {(end_time - start_time) * 1000:.2f} ms"
             )
 
+            # Extract scheduling context for advanced policies
+            _session_id = (
+                raw_request.headers.get("x-session-id")
+                or request.get("user")
+                or (raw_request.client.host if raw_request.client else None)
+            )
+            _sched_kwargs = {
+                "header": raw_request.headers.get("x-session-id"),
+                "session_id": _session_id,
+                "user": request.get("user"),
+                "client_ip": (
+                    raw_request.client.host if raw_request.client else None
+                ),
+                "prompt": prompt if isinstance(prompt, str) else str(prompt),
+            }
+
             prefill_instance = self.schedule(self.prefill_cycler,
                                                  is_prompt=True,
                                                  request_len=total_length,
-                                                 max_tokens = 1)
+                                                 max_tokens = 1,
+                                                 **_sched_kwargs)
 
             decode_instance = self.schedule(self.decode_cycler,
                                             is_prompt=False,
                                             request_len=total_length,
-                                            max_tokens = max_tokens)
+                                            max_tokens = max_tokens,
+                                            **_sched_kwargs)
 
             if prefill_instance is None or decode_instance is None:
                 log_info_red("No available instance can handle the request. ")
@@ -793,15 +816,38 @@ class Proxy:
                 f"tokenizer took "
                 f"{(end_time - start_time) * 1000:.2f} ms")
 
+            # Extract scheduling context for advanced policies
+            _prompt_text = " ".join(
+                msg.get("content", "")
+                for msg in request.get("messages", [])
+                if isinstance(msg.get("content"), str)
+            )
+            _session_id = (
+                raw_request.headers.get("x-session-id")
+                or request.get("user")
+                or (raw_request.client.host if raw_request.client else None)
+            )
+            _sched_kwargs = {
+                "header": raw_request.headers.get("x-session-id"),
+                "session_id": _session_id,
+                "user": request.get("user"),
+                "client_ip": (
+                    raw_request.client.host if raw_request.client else None
+                ),
+                "prompt": _prompt_text,
+            }
+
             prefill_instance = self.schedule(self.prefill_cycler,
                                              is_prompt=True,
                                              request_len=total_length,
-                                             max_tokens = 1)
+                                             max_tokens = 1,
+                                             **_sched_kwargs)
 
             decode_instance = self.schedule(self.decode_cycler,
                                             is_prompt=False,
                                             request_len=total_length,
-                                            max_tokens = max_tokens)
+                                            max_tokens = max_tokens,
+                                            **_sched_kwargs)
 
             if prefill_instance is None or decode_instance is None:
                 log_info_red("No available instance can handle the request. ")
@@ -888,6 +934,68 @@ class Proxy:
     def remove_instance_endpoint(self, instance_type, instance):
         return
 
+def _create_scheduling_policy(
+    config: ProxyConfig,
+    scheduling_policy_cls: Optional[type] = None,
+    registry: Optional[InstanceRegistry] = None,
+) -> SchedulingPolicy:
+    """Instantiate a scheduling policy from config or explicit class.
+
+    When *scheduling_policy_cls* is provided (legacy path), it is used
+    directly.  Otherwise the ``config.scheduling`` string selects the
+    policy via :data:`default_registry`.
+    """
+    # Legacy explicit-class path (used by existing tests and CLI --roundrobin)
+    if scheduling_policy_cls is not None:
+        return scheduling_policy_cls(
+            config.prefill, config.decode, registry=registry,
+        )
+
+    strategy = config.scheduling
+    strategy_opts = config.scheduling_config.get(strategy, {})
+
+    # Strategies that accept the legacy (prefill, decode) constructor
+    if strategy == "loadbalanced":
+        return LoadBalancedScheduler(
+            config.prefill, config.decode, registry=registry,
+        )
+    if strategy == "roundrobin":
+        return RoundRobinSchedulingPolicy(registry=registry)
+
+    # Registry-based advanced strategies
+    if strategy == "consistent_hash":
+        policy = default_registry.create(
+            "consistent_hash",
+            workers=list(config.decode),
+            **strategy_opts,
+        )
+        policy.registry = registry
+        return policy
+
+    if strategy == "power_of_two":
+        policy = default_registry.create(
+            "power_of_two",
+            workers=list(config.decode),
+            **strategy_opts,
+        )
+        policy.registry = registry
+        return policy
+
+    if strategy == "cache_aware":
+        policy = default_registry.create(
+            "cache_aware",
+            workers=list(config.decode),
+            **strategy_opts,
+        )
+        policy.registry = registry
+        return policy
+
+    # Fallback: try registry anyway
+    policy = default_registry.create(strategy, **strategy_opts)
+    policy.registry = registry
+    return policy
+
+
 class ProxyServer:
 
     def __init__(
@@ -947,9 +1055,9 @@ class ProxyServer:
             prefill_instances=config.prefill,
             decode_instances=config.decode,
             model=config.model,
-            scheduling_policy=(scheduling_policy(config.prefill, config.decode, registry=self.registry)
-                               if scheduling_policy is not None else
-                               RoundRobinSchedulingPolicy(registry=self.registry)),
+            scheduling_policy=_create_scheduling_policy(
+                config, scheduling_policy, self.registry,
+            ),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
             generator_on_p_node=config.generator_on_p_node,
@@ -1149,9 +1257,7 @@ def main():
     args.config = _resolve_config_path(args)
 
     config = ProxyConfig.from_args(args)
-    scheduling_policy = None if config.roundrobin else LoadBalancedScheduler
-    proxy_server = ProxyServer(config=config,
-                               scheduling_policy=scheduling_policy)
+    proxy_server = ProxyServer(config=config)
     proxy_server.run_server()
 
 

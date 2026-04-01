@@ -190,9 +190,17 @@ class CacheAwarePolicy(SchedulingPolicy):
     ) -> Optional[str]:
         """Schedule using prompt prefix for cache-aware routing.
 
-        The ``prompt`` keyword arg is not passed by the current proxy router.
-        Router integration (extracting prompt from the HTTP request and
-        passing it here) is deferred to a follow-up integration PR.
-        Without it, requests fall back to empty-string hashing.
+        If a registry is attached, refreshes the worker list from
+        available instances before selecting.
         """
+        if self._registry is not None:
+            available = self._registry.get_available_instances("decode")
+            with self.lock:
+                current = self._ring.workers
+                for addr in available:
+                    if addr not in current:
+                        self._ring.add_worker(addr)
+                for addr in current:
+                    if addr not in available:
+                        self._ring.remove_worker(addr)
         return self.select(prompt=prompt)
