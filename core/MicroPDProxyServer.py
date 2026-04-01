@@ -35,6 +35,8 @@ try:
     from .config import ProxyConfig
     from .discovery import NodeDiscovery
     from .metrics import get_metrics, track_request_end, track_request_start
+    from .health_monitor import HealthMonitor
+    from .registry import InstanceRegistry
     from .scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
@@ -44,6 +46,8 @@ except ImportError:
     from config import ProxyConfig
     from discovery import NodeDiscovery
     from metrics import get_metrics, track_request_end, track_request_start
+    from health_monitor import HealthMonitor
+    from registry import InstanceRegistry
     from scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
@@ -173,13 +177,15 @@ class Proxy:
                      [Request], StreamingResponse]] = None,
                  custom_create_chat_completion: Optional[Callable[
                      [Request], StreamingResponse]] = None,
-                 generator_on_p_node: bool = False):
+                 generator_on_p_node: bool = False,
+                 registry: Optional[InstanceRegistry] = None):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
         self.prefill_cycler = itertools.cycle(prefill_instances)
         self.decode_cycler = itertools.cycle(decode_instances)
         self.model = model
         self.scheduling_policy = scheduling_policy
+        self.registry = registry
         self.custom_create_completion = custom_create_completion
         self.custom_create_chat_completion = custom_create_chat_completion
         self.router = APIRouter()
@@ -589,9 +595,23 @@ class Proxy:
                     decode_instance=decode_instance,
                     req_len=req_len
                 )
+                # Record success with registry for circuit breaker tracking
+                if self.registry is not None:
+                    if prefill_instance:
+                        self.registry.record_success(prefill_instance)
+                    if decode_instance:
+                        self.registry.record_success(decode_instance)
             except Exception as e:
                 logger.error(f"Error releasing instances: {e}")
                 raise
+
+    def _record_failure(self, prefill_instance=None, decode_instance=None):
+        """Record request failure with registry for circuit breaker tracking."""
+        if self.registry is not None:
+            if prefill_instance:
+                self.registry.record_failure(prefill_instance)
+            if decode_instance:
+                self.registry.record_failure(decode_instance)
 
     async def create_completion(self, raw_request: Request):
         return await self._create_completion(raw_request)
@@ -659,6 +679,7 @@ class Proxy:
                     value += chunk
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             # Perform kv recv and decoding stage
@@ -677,6 +698,7 @@ class Proxy:
                     f"http://{decode_instance}/v1/completions", request)
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             if request.get("stream", False):
@@ -798,6 +820,7 @@ class Proxy:
                     value += chunk
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             # Perform kv recv and decoding stage
@@ -817,6 +840,7 @@ class Proxy:
                     request)
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             if request.get("stream", False):
@@ -879,16 +903,57 @@ class ProxyServer:
         self.verify_model_config(config.prefill, config.model)
         self.verify_model_config(config.decode, config.model)
         self.port = config.port
+
+        # Create instance registry and register all instances
+        cb_cfg = config.circuit_breaker
+        self.registry = InstanceRegistry(
+            cb_enabled=cb_cfg.enabled,
+            failure_threshold=cb_cfg.failure_threshold,
+            success_threshold=cb_cfg.success_threshold,
+            timeout_duration_seconds=cb_cfg.timeout_duration_seconds,
+            window_duration_seconds=cb_cfg.window_duration_seconds,
+        )
+        _registered_prefill: set[str] = set()
+        _registered_decode: set[str] = set()
+        for addr in config.prefill:
+            if addr not in _registered_prefill:
+                self.registry.add("prefill", addr)
+                _registered_prefill.add(addr)
+        for addr in config.decode:
+            if addr not in _registered_decode:
+                self.registry.add("decode", addr)
+                _registered_decode.add(addr)
+        _registered = _registered_prefill | _registered_decode
+
+        # Create health monitor if enabled
+        self.health_monitor = None
+        hc_cfg = config.health_check
+        if hc_cfg.enabled:
+            all_instances = config.prefill + config.decode
+            self.health_monitor = HealthMonitor(
+                nodes=all_instances,
+                interval_seconds=hc_cfg.interval_seconds,
+                timeout_seconds=hc_cfg.timeout_seconds,
+                on_healthy=self.registry.mark_healthy,
+                on_unhealthy=self.registry.mark_unhealthy,
+            )
+        else:
+            # Without health monitoring, assume all instances are healthy
+            # so they appear in get_available_instances().
+            for addr in _registered:
+                self.registry.mark_healthy(addr)
+
         self.proxy_instance = Proxy(
             prefill_instances=config.prefill,
             decode_instances=config.decode,
             model=config.model,
-            scheduling_policy=(scheduling_policy(config.prefill, config.decode)
+            scheduling_policy=(scheduling_policy(config.prefill, config.decode, registry=self.registry)
                                if scheduling_policy is not None else
-                               RoundRobinSchedulingPolicy()),
+                               RoundRobinSchedulingPolicy(registry=self.registry)),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
             generator_on_p_node=config.generator_on_p_node,
+            registry=self.registry,
         )
 
     def verify_model_config(self, instances: list, model: str) -> None:
@@ -940,10 +1005,31 @@ class ProxyServer:
         @app.on_event("startup")
         async def _start_discovery():
             await discovery.start()
+            if self.health_monitor:
+                await self.health_monitor.start()
 
         @app.on_event("shutdown")
         async def _stop_discovery():
             await discovery.stop()
+            if self.health_monitor:
+                await self.health_monitor.stop()
+
+        @app.get("/status/instances")
+        async def _instance_status():
+            """Return per-instance health and circuit breaker state."""
+            result: dict[str, list] = {
+                "prefill_instances": [],
+                "decode_instances": [],
+            }
+            for info in self.registry.get_all_instances():
+                result[f"{info.role}_instances"].append({
+                    "address": info.address,
+                    "status": info.status.value,
+                    "circuit": info.circuit_breaker_state.value,
+                    "active_requests": info.active_request_count,
+                    "last_check": info.last_health_check,
+                })
+            return JSONResponse(result)
 
         app.include_router(self.proxy_instance.router)
         config = uvicorn.Config(app,

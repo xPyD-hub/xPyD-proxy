@@ -308,10 +308,10 @@ circuit_breaker:
 ```
 
 **Verification:**
-- `GET /status` shows per-node circuit breaker state:
+- `GET /status/instances` shows per-instance circuit breaker state:
   ```json
   {
-    "nodes": {
+    "instances": {
       "10.0.0.1:8200": {"status": "healthy", "circuit": "closed"},
       "10.0.0.2:8200": {"status": "unhealthy", "circuit": "open", "open_since": "2026-04-01T10:00:05Z"},
       "10.0.0.3:8200": {"status": "healthy", "circuit": "closed"}
@@ -423,13 +423,13 @@ health_check:
   timeout_seconds: 3              # default: 3
 ```
 
-**`/status` response when enabled:**
+**`/status/instances` response when enabled:**
 ```json
 {
-  "prefill_nodes": [
+  "prefill_instances": [
     {"address": "10.0.0.1:8100", "status": "healthy", "circuit": "closed", "last_check": "2026-04-01T10:00:10Z"}
   ],
-  "decode_nodes": [
+  "decode_instances": [
     {"address": "10.0.0.3:8200", "status": "healthy", "circuit": "closed", "last_check": "2026-04-01T10:00:10Z"},
     {"address": "10.0.0.4:8200", "status": "unhealthy", "circuit": "open", "last_check": "2026-04-01T10:00:10Z"}
   ]
@@ -562,7 +562,7 @@ def test_circuit_breaker_end_to_end():
     # 3. Kill decode node 1
     # 4. Wait for health check to detect (~2s)
     # 5. Send requests → all routed to node 2 (circuit open on node 1)
-    # 6. GET /status → verify node 1 circuit="open"
+    # 6. GET /status/instances → verify instance 1 circuit="open"
     # 7. Restart decode node 1
     # 8. Wait for circuit half-open → probe → close (~4s)
     # 9. Send requests → balanced across both nodes again
