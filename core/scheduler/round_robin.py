@@ -33,19 +33,19 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
     ) -> Optional[str]:
         if self._registry is not None:
             role = "prefill" if is_prompt else "decode"
-            available = self._registry.get_available_instances(role)
+            available = set(self._registry.get_available_instances(role))
             if not available:
                 return None
             with self.lock:
-                # Round-robin over available instances
-                instance = next(cycler)
-                # Try up to N times to find one that's available
-                seen = 0
-                total = len(available)
-                while instance not in available:
+                # Advance cycler until we find an available instance or
+                # complete a full cycle (all unique addresses seen once).
+                seen_addrs: set[str] = set()
+                while True:
                     instance = next(cycler)
-                    seen += 1
-                    if seen > total + len(available):
+                    if instance in available:
+                        return instance
+                    if instance in seen_addrs:
+                        # Full cycle without finding available → give up
                         return None
-                return instance
+                    seen_addrs.add(instance)
         return self.safe_next(cycler)

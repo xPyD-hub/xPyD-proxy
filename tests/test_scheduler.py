@@ -126,6 +126,16 @@ class TestRoundRobinWithRegistry:
         cycler = itertools.cycle(prefill)
         assert policy.schedule(cycler, is_prompt=True) is None
 
+    def test_finds_last_healthy_in_many_unhealthy(self):
+        """Regression: guard must iterate full cycle, not bail early."""
+        prefill = ["p1:1", "p2:2", "p3:3", "p4:4", "p5:5"]
+        decode = ["d1:1"]
+        reg = self._make_registry(prefill, decode, healthy_addrs=["p5:5", "d1:1"])
+        policy = RoundRobinSchedulingPolicy(registry=reg)
+        cycler = itertools.cycle(prefill)
+        result = policy.schedule(cycler, is_prompt=True)
+        assert result == "p5:5"
+
     def test_no_registry_falls_back(self):
         policy = RoundRobinSchedulingPolicy()
         cycler = itertools.cycle(["a:1", "b:2"])
