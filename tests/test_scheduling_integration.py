@@ -27,11 +27,11 @@ class TestCacheAwarePolicy:
     def test_same_prefix_same_worker(self):
         policy = CacheAwarePolicy(
             workers=["w1", "w2", "w3"],
-            prefix_length=256,
+            prefix_length=5,
         )
-        prompt = "The quick brown fox " * 50  # >256 chars
-        w1 = policy.select(prompt=prompt)
-        w2 = policy.select(prompt=prompt + " jumps over the lazy dog")
+        # Both prompts share the same first 5 tokens (whitespace-split)
+        w1 = policy.select(prompt="alpha beta gamma delta epsilon zeta")
+        w2 = policy.select(prompt="alpha beta gamma delta epsilon different")
         assert w1 == w2
 
     def test_different_prefix_can_differ(self):
