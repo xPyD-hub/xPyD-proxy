@@ -4,14 +4,26 @@
 import itertools
 import threading
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from core.registry import InstanceRegistry
 
 
 class SchedulingPolicy(ABC):
     """Base class for all scheduling policies."""
 
-    def __init__(self):
+    def __init__(self, registry: Optional["InstanceRegistry"] = None):
         self.lock = threading.Lock()
+        self._registry: Optional["InstanceRegistry"] = registry
+
+    @property
+    def registry(self) -> Optional["InstanceRegistry"]:
+        return self._registry
+
+    @registry.setter
+    def registry(self, value: Optional["InstanceRegistry"]) -> None:
+        self._registry = value
 
     @abstractmethod
     def schedule(

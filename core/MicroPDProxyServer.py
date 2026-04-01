@@ -177,13 +177,15 @@ class Proxy:
                      [Request], StreamingResponse]] = None,
                  custom_create_chat_completion: Optional[Callable[
                      [Request], StreamingResponse]] = None,
-                 generator_on_p_node: bool = False):
+                 generator_on_p_node: bool = False,
+                 registry: Optional[InstanceRegistry] = None):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
         self.prefill_cycler = itertools.cycle(prefill_instances)
         self.decode_cycler = itertools.cycle(decode_instances)
         self.model = model
         self.scheduling_policy = scheduling_policy
+        self.registry = registry
         self.custom_create_completion = custom_create_completion
         self.custom_create_chat_completion = custom_create_chat_completion
         self.router = APIRouter()
@@ -593,9 +595,23 @@ class Proxy:
                     decode_instance=decode_instance,
                     req_len=req_len
                 )
+                # Record success with registry for circuit breaker tracking
+                if self.registry is not None:
+                    if prefill_instance:
+                        self.registry.record_success(prefill_instance)
+                    if decode_instance:
+                        self.registry.record_success(decode_instance)
             except Exception as e:
                 logger.error(f"Error releasing instances: {e}")
                 raise
+
+    def _record_failure(self, prefill_instance=None, decode_instance=None):
+        """Record request failure with registry for circuit breaker tracking."""
+        if self.registry is not None:
+            if prefill_instance:
+                self.registry.record_failure(prefill_instance)
+            if decode_instance:
+                self.registry.record_failure(decode_instance)
 
     async def create_completion(self, raw_request: Request):
         return await self._create_completion(raw_request)
@@ -663,6 +679,7 @@ class Proxy:
                     value += chunk
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             # Perform kv recv and decoding stage
@@ -681,6 +698,7 @@ class Proxy:
                     f"http://{decode_instance}/v1/completions", request)
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             if request.get("stream", False):
@@ -802,6 +820,7 @@ class Proxy:
                     value += chunk
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             # Perform kv recv and decoding stage
@@ -821,6 +840,7 @@ class Proxy:
                     request)
             except HTTPException as http_exc:
                 self.exception_handler(prefill_instance, decode_instance, total_length)
+                self._record_failure(prefill_instance, decode_instance)
                 raise http_exc
 
             if request.get("stream", False):
@@ -927,12 +947,13 @@ class ProxyServer:
             prefill_instances=config.prefill,
             decode_instances=config.decode,
             model=config.model,
-            scheduling_policy=(scheduling_policy(config.prefill, config.decode)
+            scheduling_policy=(scheduling_policy(config.prefill, config.decode, registry=self.registry)
                                if scheduling_policy is not None else
-                               RoundRobinSchedulingPolicy()),
+                               RoundRobinSchedulingPolicy(registry=self.registry)),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
             generator_on_p_node=config.generator_on_p_node,
+            registry=self.registry,
         )
 
     def verify_model_config(self, instances: list, model: str) -> None:
