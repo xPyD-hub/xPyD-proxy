@@ -6,12 +6,14 @@ try:
     from .round_robin import RoundRobinSchedulingPolicy
     from .load_balanced import LoadBalancedScheduler
     from .consistent_hash import ConsistentHashPolicy
+    from .power_of_two import PowerOfTwoPolicy
     from .policy_registry import PolicyRegistry, default_registry
 except ImportError:
     from scheduler_base import SchedulingPolicy
     from round_robin import RoundRobinSchedulingPolicy
     from load_balanced import LoadBalancedScheduler
     from consistent_hash import ConsistentHashPolicy
+    from power_of_two import PowerOfTwoPolicy
     from policy_registry import PolicyRegistry, default_registry
 
 __all__ = [
@@ -19,6 +21,7 @@ __all__ = [
     "RoundRobinSchedulingPolicy",
     "LoadBalancedScheduler",
     "ConsistentHashPolicy",
+    "PowerOfTwoPolicy",
     "PolicyRegistry",
     "default_registry",
 ]
