@@ -231,6 +231,7 @@ def _send_request(base_url: str, model: str, idx: int) -> dict:
 
 
 @pytest.mark.benchmark
+@pytest.mark.benchmark
 def test_benchmark_10k_mixed(cluster):
     """Fire 10000 mixed (streaming + non-streaming) requests at 1000 concurrency.
 
@@ -283,6 +284,7 @@ def test_benchmark_10k_mixed(cluster):
 
 
 @pytest.mark.benchmark
+@pytest.mark.benchmark
 def test_benchmark_streaming_only(cluster):
     """1000 concurrent streaming requests to verify SSE under load."""
     base_url = f"http://127.0.0.1:{cluster['proxy_port']}"
@@ -306,6 +308,7 @@ def test_benchmark_streaming_only(cluster):
     assert has_chunks == count, "Some streaming responses had fewer than 2 chunks"
 
 
+@pytest.mark.benchmark
 @pytest.mark.benchmark
 def test_benchmark_burst_short_prompts(cluster):
     """Burst of 5000 short-prompt requests (< 100 chars) at full concurrency."""
@@ -338,6 +341,7 @@ def test_benchmark_burst_short_prompts(cluster):
     assert success == count, f"{count - success} short-burst requests failed"
 
 
+@pytest.mark.benchmark
 @pytest.mark.benchmark
 def test_benchmark_long_prompts(cluster):
     """500 requests with long prompts (5k-10k chars) at moderate concurrency."""
