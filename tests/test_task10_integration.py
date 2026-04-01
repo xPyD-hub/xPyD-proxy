@@ -3,20 +3,18 @@
 YAML-based policy selection."""
 
 import itertools
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.scheduler import (
     CacheAwarePolicy,
     ConsistentHashPolicy,
-    LoadBalancedScheduler,
     PowerOfTwoPolicy,
     RoundRobinSchedulingPolicy,
     default_registry,
 )
 from core.scheduler.cache_aware import CacheAwarePolicy as CacheAwareDirect
-
 
 # ------------------------------------------------------------------ #
 # Cache-aware policy unit tests
@@ -28,7 +26,8 @@ class TestCacheAwarePolicy:
 
     def test_same_prefix_same_worker(self):
         policy = CacheAwarePolicy(
-            workers=["w1", "w2", "w3"], prefix_length=256,
+            workers=["w1", "w2", "w3"],
+            prefix_length=256,
         )
         prompt = "The quick brown fox " * 50  # >256 chars
         w1 = policy.select(prompt=prompt)
@@ -37,7 +36,8 @@ class TestCacheAwarePolicy:
 
     def test_different_prefix_can_differ(self):
         policy = CacheAwarePolicy(
-            workers=["w1", "w2", "w3"], prefix_length=256,
+            workers=["w1", "w2", "w3"],
+            prefix_length=256,
         )
         selected = set()
         for i in range(50):
@@ -85,37 +85,45 @@ class TestCacheAwarePolicy:
 class TestPolicyRegistryIntegration:
     """Verify all Task 10 policies are registered in default_registry."""
 
-    @pytest.mark.parametrize("name", [
-        "roundrobin",
-        "loadbalanced",
-        "consistent_hash",
-        "power_of_two",
-        "cache_aware",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "roundrobin",
+            "loadbalanced",
+            "consistent_hash",
+            "power_of_two",
+            "cache_aware",
+        ],
+    )
     def test_builtin_policies_registered(self, name):
         assert default_registry.has(name)
 
     def test_create_consistent_hash(self):
         policy = default_registry.create(
-            "consistent_hash", workers=["w1", "w2"],
+            "consistent_hash",
+            workers=["w1", "w2"],
         )
         assert isinstance(policy, ConsistentHashPolicy)
 
     def test_create_power_of_two(self):
         policy = default_registry.create(
-            "power_of_two", workers=["w1", "w2"],
+            "power_of_two",
+            workers=["w1", "w2"],
         )
         assert isinstance(policy, PowerOfTwoPolicy)
 
     def test_create_cache_aware(self):
         policy = default_registry.create(
-            "cache_aware", workers=["w1", "w2"], prefix_length=128,
+            "cache_aware",
+            workers=["w1", "w2"],
+            prefix_length=128,
         )
         assert isinstance(policy, CacheAwareDirect)
 
     def test_create_cache_aware_default_prefix(self):
         policy = default_registry.create(
-            "cache_aware", workers=["w1"],
+            "cache_aware",
+            workers=["w1"],
         )
         assert policy._prefix_length == 256
 
