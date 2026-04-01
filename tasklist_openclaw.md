@@ -17,7 +17,7 @@ The system uses a shell script `xpyd_start_proxy.sh` to configure and launch a d
 
 ---
 
-## Task 10 (PLANNED)
+## Task 10 (IN PROGRESS)
 
 ### Goal
 Add advanced load balancing strategies beyond round-robin and load-balanced. Inspired by [vllm-project/router](https://github.com/vllm-project/router).
@@ -219,7 +219,7 @@ def test_policy_selectable_via_yaml():
 
 ---
 
-## Task 9 (PLANNED)
+## Task 9 (DONE)
 
 ### Goal
 Make the proxy self-healing: detect failing nodes, stop sending them traffic, retry failed requests on healthy nodes, and automatically recover when nodes come back. Inspired by [vllm-project/router](https://github.com/vllm-project/router).
@@ -599,7 +599,7 @@ def test_retry_routes_to_different_node():
 
 ---
 
-## Task 8 (IN PROGRESS)
+## Task 8 (DONE)
 
 ### Goal
 Package the proxy as an installable CLI tool (`xpyd`) with startup node discovery.
