@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .load_balanced import LoadBalancedScheduler
 from .round_robin import RoundRobinSchedulingPolicy
 from .scheduler_base import SchedulingPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyRegistry:
@@ -21,7 +24,24 @@ class PolicyRegistry:
         self._policies: dict[str, type[SchedulingPolicy]] = {}
 
     def register(self, name: str, policy_cls: type) -> None:
-        """Register a scheduling policy class under *name*."""
+        """Register a scheduling policy class under *name*.
+
+        Raises:
+            TypeError: If *policy_cls* is not a subclass of
+                :class:`SchedulingPolicy`.
+        """
+        if not (isinstance(policy_cls, type)
+                and issubclass(policy_cls, SchedulingPolicy)):
+            raise TypeError(
+                f"{policy_cls!r} is not a subclass of SchedulingPolicy"
+            )
+        if name in self._policies:
+            logger.warning(
+                "Overwriting existing policy %r (%s) with %s",
+                name,
+                self._policies[name].__name__,
+                policy_cls.__name__,
+            )
         self._policies[name] = policy_cls
 
     def create(self, name: str, **kwargs: Any) -> SchedulingPolicy:

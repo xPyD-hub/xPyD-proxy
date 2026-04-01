@@ -55,6 +55,26 @@ class TestPolicyRegistry:
         reg = PolicyRegistry()
         assert not reg.has("missing")
 
+    def test_register_non_policy_raises_type_error(self):
+        """Registering a class that is not a SchedulingPolicy raises TypeError."""
+        reg = PolicyRegistry()
+        with pytest.raises(TypeError, match="not a subclass of SchedulingPolicy"):
+            reg.register("bad", dict)
+
+    def test_register_non_class_raises_type_error(self):
+        """Registering a non-class object raises TypeError."""
+        reg = PolicyRegistry()
+        with pytest.raises(TypeError, match="not a subclass of SchedulingPolicy"):
+            reg.register("bad", "not_a_class")
+
+    def test_duplicate_register_warns(self, caplog):
+        """Re-registering the same name logs a warning."""
+        reg = PolicyRegistry()
+        reg.register("dup", _DummyPolicy)
+        with caplog.at_level("WARNING"):
+            reg.register("dup", _DummyPolicy)
+        assert "Overwriting existing policy" in caplog.text
+
     def test_create_returns_correct_type(self):
         """create() returns an instance of the registered class."""
         rr = default_registry.create("roundrobin")
