@@ -171,6 +171,7 @@ class ConsistentHashPolicy(SchedulingPolicy):
         session_id: Optional[str] = None,
         user: Optional[str] = None,
         client_ip: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using request context for consistent hashing.
 

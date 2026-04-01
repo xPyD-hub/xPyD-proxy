@@ -220,6 +220,7 @@ class CacheAwarePolicy(SchedulingPolicy):
         max_tokens: Optional[int] = None,
         *,
         prompt: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using prompt prefix for cache-aware routing.
 
