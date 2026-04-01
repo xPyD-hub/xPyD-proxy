@@ -2,21 +2,21 @@
 """Scheduler module for MicroPDProxy."""
 
 try:
-    from .scheduler_base import SchedulingPolicy
-    from .round_robin import RoundRobinSchedulingPolicy
-    from .load_balanced import LoadBalancedScheduler
-    from .consistent_hash import ConsistentHashPolicy
-    from .power_of_two import PowerOfTwoPolicy
     from .cache_aware import CacheAwarePolicy
+    from .consistent_hash import ConsistentHashPolicy
+    from .load_balanced import LoadBalancedScheduler
     from .policy_registry import PolicyRegistry, default_registry
+    from .power_of_two import PowerOfTwoPolicy
+    from .round_robin import RoundRobinSchedulingPolicy
+    from .scheduler_base import SchedulingPolicy
 except ImportError:
-    from scheduler_base import SchedulingPolicy
-    from round_robin import RoundRobinSchedulingPolicy
-    from load_balanced import LoadBalancedScheduler
-    from consistent_hash import ConsistentHashPolicy
-    from power_of_two import PowerOfTwoPolicy
     from cache_aware import CacheAwarePolicy
+    from consistent_hash import ConsistentHashPolicy
+    from load_balanced import LoadBalancedScheduler
     from policy_registry import PolicyRegistry, default_registry
+    from power_of_two import PowerOfTwoPolicy
+    from round_robin import RoundRobinSchedulingPolicy
+    from scheduler_base import SchedulingPolicy
 
 __all__ = [
     "SchedulingPolicy",

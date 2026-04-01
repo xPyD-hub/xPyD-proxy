@@ -7,10 +7,7 @@ import logging
 from typing import Any
 
 from .cache_aware import CacheAwarePolicy
-<<<<<<< HEAD
-=======
 from .consistent_hash import ConsistentHashPolicy
->>>>>>> d0719f7 (feat: Task 10 integration — wire advanced scheduling policies into proxy router)
 from .load_balanced import LoadBalancedScheduler
 from .power_of_two import PowerOfTwoPolicy
 from .round_robin import RoundRobinSchedulingPolicy

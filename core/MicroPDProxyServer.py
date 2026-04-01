@@ -19,23 +19,28 @@ import logging
 import os
 import sys
 import time
+from asyncio import CancelledError
 from typing import Callable, Optional
 
 import aiohttp
 import requests
 import uvicorn
 from colorlog.escape_codes import escape_codes
-from fastapi import (APIRouter, Depends, FastAPI, Header, HTTPException,
-                     Request, status)
-from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
-from transformers import AutoTokenizer
-from asyncio import CancelledError
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
+from transformers import AutoTokenizer
+
 try:
     from .config import ProxyConfig
     from .discovery import NodeDiscovery
-    from .metrics import get_metrics, track_request_end, track_request_start
     from .health_monitor import HealthMonitor
+    from .metrics import get_metrics, track_request_end, track_request_start
     from .registry import InstanceRegistry
     from .scheduler import (
         LoadBalancedScheduler,
@@ -46,8 +51,8 @@ try:
 except ImportError:
     from config import ProxyConfig
     from discovery import NodeDiscovery
-    from metrics import get_metrics, track_request_end, track_request_start
     from health_monitor import HealthMonitor
+    from metrics import get_metrics, track_request_end, track_request_start
     from registry import InstanceRegistry
     from scheduler import (
         LoadBalancedScheduler,

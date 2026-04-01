@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Task 10 integration — scheduling context extraction and
+"""Tests for advanced scheduling integration — scheduling context extraction and
 YAML-based policy selection."""
 
 import itertools
@@ -29,9 +29,10 @@ class TestCacheAwarePolicy:
             workers=["w1", "w2", "w3"],
             prefix_length=256,
         )
-        prompt = "The quick brown fox " * 50  # >256 chars
-        w1 = policy.select(prompt=prompt)
-        w2 = policy.select(prompt=prompt + " jumps over the lazy dog")
+        # Create prompts that share the first 256+ whitespace tokens
+        shared = "word " * 300  # 300 tokens, prefix_length=256 → same prefix
+        w1 = policy.select(prompt=shared + "suffix_a")
+        w2 = policy.select(prompt=shared + "suffix_b")
         assert w1 == w2
 
     def test_different_prefix_can_differ(self):
