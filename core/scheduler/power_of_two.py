@@ -113,6 +113,7 @@ class PowerOfTwoPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Schedule using power-of-two-choices.
 
@@ -120,7 +121,7 @@ class PowerOfTwoPolicy(SchedulingPolicy):
         from available instances before selecting.
         """
         if self._registry is not None:
-            available = self._registry.get_available("decode")
+            available = self._registry.get_available_instances("decode")
             with self.lock:
                 self._workers = list(available)
                 # Sync load from registry where possible
