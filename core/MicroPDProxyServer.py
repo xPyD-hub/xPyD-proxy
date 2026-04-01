@@ -1017,19 +1017,18 @@ class ProxyServer:
         @app.get("/status/instances")
         async def _instance_status():
             """Return per-instance health and circuit breaker state."""
-            result = {"prefill_instances": [], "decode_instances": []}
-            all_instances = self.registry.get_all_instances()
-            for role in ("prefill", "decode"):
-                for info in all_instances:
-                    if info.role != role:
-                        continue
-                    result[f"{role}_instances"].append({
-                        "address": info.address,
-                        "status": info.status.value,
-                        "circuit": info.circuit_breaker_state.value,
-                        "active_requests": info.active_request_count,
-                        "last_check": info.last_health_check,
-                    })
+            result: dict[str, list] = {
+                "prefill_instances": [],
+                "decode_instances": [],
+            }
+            for info in self.registry.get_all_instances():
+                result[f"{info.role}_instances"].append({
+                    "address": info.address,
+                    "status": info.status.value,
+                    "circuit": info.circuit_breaker_state.value,
+                    "active_requests": info.active_request_count,
+                    "last_check": info.last_health_check,
+                })
             return JSONResponse(result)
 
         app.include_router(self.proxy_instance.router)

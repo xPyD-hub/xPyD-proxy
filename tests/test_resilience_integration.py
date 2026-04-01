@@ -23,16 +23,13 @@ _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
 
 
 def _free_port():
-    with socket.socket() as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-# Start dummy nodes for integration tests.
-_PREFILL_PORT = _free_port()
-_DECODE_PORT_1 = _free_port()
-_DECODE_PORT_2 = _free_port()
+    """Allocate a free port. Keep socket open until caller binds to avoid races."""
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def _run_server(app, port):
@@ -40,24 +37,37 @@ def _run_server(app, port):
     uvicorn.Server(config).run()
 
 
-threading.Thread(
-    target=_run_server, args=(prefill_app, _PREFILL_PORT), daemon=True
-).start()
-threading.Thread(
-    target=_run_server, args=(decode_app, _DECODE_PORT_1), daemon=True
-).start()
-threading.Thread(
-    target=_run_server, args=(decode_app, _DECODE_PORT_2), daemon=True
-).start()
-time.sleep(2)
+@pytest.fixture(scope="session")
+def dummy_nodes():
+    """Start dummy prefill/decode servers once per test session."""
+    prefill_port = _free_port()
+    decode_port_1 = _free_port()
+    decode_port_2 = _free_port()
+
+    for app, port in [
+        (prefill_app, prefill_port),
+        (decode_app, decode_port_1),
+        (decode_app, decode_port_2),
+    ]:
+        threading.Thread(target=_run_server, args=(app, port), daemon=True).start()
+    time.sleep(2)
+
+    return {
+        "prefill_port": prefill_port,
+        "decode_port_1": decode_port_1,
+        "decode_port_2": decode_port_2,
+    }
 
 
-def _make_config(**overrides):
+def _make_config(dummy_nodes, **overrides):
     """Build a ProxyConfig for testing."""
     defaults = {
         "model": _TOKENIZER_PATH,
-        "prefill": [f"127.0.0.1:{_PREFILL_PORT}"],
-        "decode": [f"127.0.0.1:{_DECODE_PORT_1}", f"127.0.0.1:{_DECODE_PORT_2}"],
+        "prefill": [f"127.0.0.1:{dummy_nodes['prefill_port']}"],
+        "decode": [
+            f"127.0.0.1:{dummy_nodes['decode_port_1']}",
+            f"127.0.0.1:{dummy_nodes['decode_port_2']}",
+        ],
         "port": 8000,
     }
     defaults.update(overrides)
@@ -96,8 +106,8 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def baseline_client():
-    config = _make_config()
+async def baseline_client(dummy_nodes):
+    config = _make_config(dummy_nodes)
     app = _make_proxy_app(config)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as cli:
@@ -141,45 +151,45 @@ async def test_baseline_chat_completion(baseline_client):
 
 
 class TestRegistry:
-    def test_registry_registers_all_instances(self):
+    def test_registry_registers_all_instances(self, dummy_nodes):
         from registry import InstanceRegistry
 
         registry = InstanceRegistry()
-        registry.add("prefill", f"127.0.0.1:{_PREFILL_PORT}")
-        registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
-        registry.add("decode", f"127.0.0.1:{_DECODE_PORT_2}")
+        registry.add("prefill", f"127.0.0.1:{dummy_nodes['prefill_port']}")
+        registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
+        registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_2']}")
 
         # New instances default to UNKNOWN — mark healthy first.
-        registry.mark_healthy(f"127.0.0.1:{_PREFILL_PORT}")
-        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_1}")
-        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_2}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['prefill_port']}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['decode_port_1']}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['decode_port_2']}")
 
         prefill = registry.get_available_instances("prefill")
         decode = registry.get_available_instances("decode")
         assert len(prefill) == 1
         assert len(decode) == 2
 
-    def test_registry_mark_unhealthy_removes_from_available(self):
+    def test_registry_mark_unhealthy_removes_from_available(self, dummy_nodes):
         from registry import InstanceRegistry
 
         registry = InstanceRegistry()
-        registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
-        registry.add("decode", f"127.0.0.1:{_DECODE_PORT_2}")
-        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_1}")
-        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_2}")
-        registry.mark_unhealthy(f"127.0.0.1:{_DECODE_PORT_1}")
+        registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
+        registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_2']}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['decode_port_1']}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['decode_port_2']}")
+        registry.mark_unhealthy(f"127.0.0.1:{dummy_nodes['decode_port_1']}")
         available = registry.get_available_instances("decode")
         assert len(available) == 1
-        assert f"127.0.0.1:{_DECODE_PORT_2}" in available
+        assert f"127.0.0.1:{dummy_nodes['decode_port_2']}" in available
 
-    def test_registry_mark_healthy_restores(self):
+    def test_registry_mark_healthy_restores(self, dummy_nodes):
         from registry import InstanceRegistry
 
         registry = InstanceRegistry()
-        registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
-        registry.mark_unhealthy(f"127.0.0.1:{_DECODE_PORT_1}")
+        registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
+        registry.mark_unhealthy(f"127.0.0.1:{dummy_nodes['decode_port_1']}")
         assert len(registry.get_available_instances("decode")) == 0
-        registry.mark_healthy(f"127.0.0.1:{_DECODE_PORT_1}")
+        registry.mark_healthy(f"127.0.0.1:{dummy_nodes['decode_port_1']}")
         assert len(registry.get_available_instances("decode")) == 1
 
 
@@ -240,12 +250,15 @@ class TestCircuitBreakerIntegration:
 
 
 @pytest.mark.anyio
-async def test_health_monitor_detects_healthy():
+async def test_health_monitor_detects_healthy(dummy_nodes):
     from health_monitor import HealthMonitor
 
     results = []
     monitor = HealthMonitor(
-        nodes=[f"127.0.0.1:{_DECODE_PORT_1}", f"127.0.0.1:{_DECODE_PORT_2}"],
+        nodes=[
+            f"127.0.0.1:{dummy_nodes['decode_port_1']}",
+            f"127.0.0.1:{dummy_nodes['decode_port_2']}",
+        ],
         interval_seconds=60,
         timeout_seconds=2,
         on_healthy=lambda addr: results.append(("healthy", addr)),
@@ -281,17 +294,17 @@ async def test_health_monitor_detects_unreachable():
 
 
 @pytest.mark.anyio
-async def test_health_monitor_updates_registry():
+async def test_health_monitor_updates_registry(dummy_nodes):
     """Health monitor callbacks should update registry status."""
     from health_monitor import HealthMonitor
     from registry import InstanceRegistry
 
     registry = InstanceRegistry()
-    registry.add("decode", f"127.0.0.1:{_DECODE_PORT_1}")
+    registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
     registry.add("decode", "127.0.0.1:1")  # unreachable
 
     monitor = HealthMonitor(
-        nodes=[f"127.0.0.1:{_DECODE_PORT_1}", "127.0.0.1:1"],
+        nodes=[f"127.0.0.1:{dummy_nodes['decode_port_1']}", "127.0.0.1:1"],
         interval_seconds=60,
         timeout_seconds=1,
         on_healthy=registry.mark_healthy,
@@ -300,7 +313,7 @@ async def test_health_monitor_updates_registry():
     await monitor.check_once()
 
     available = registry.get_available_instances("decode")
-    assert f"127.0.0.1:{_DECODE_PORT_1}" in available
+    assert f"127.0.0.1:{dummy_nodes['decode_port_1']}" in available
     assert "127.0.0.1:1" not in available
 
 
@@ -327,14 +340,14 @@ class TestNoRetryOn4xx:
 
 
 class TestBackwardCompatibility:
-    def test_default_config_all_disabled(self):
-        config = _make_config()
+    def test_default_config_all_disabled(self, dummy_nodes):
+        config = _make_config(dummy_nodes)
         assert config.circuit_breaker.enabled is False
         assert config.health_check.enabled is False
 
     @pytest.mark.anyio
-    async def test_proxy_works_with_all_disabled(self):
-        config = _make_config()
+    async def test_proxy_works_with_all_disabled(self, dummy_nodes):
+        config = _make_config(dummy_nodes)
         app = _make_proxy_app(config)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
