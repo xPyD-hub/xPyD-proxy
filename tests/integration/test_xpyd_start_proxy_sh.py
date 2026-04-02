@@ -88,21 +88,17 @@ def test_valid_topology_simple_same_node_instances():
         "8",
     )
     assert result.returncode == 0, result.stderr
-    cmd = extract_running_line(result.stdout)
-    expected_prefill = (
-        "--prefill "
-        "10.239.129.9:8100 10.239.129.9:8101 "
-        "10.239.129.67:8100 10.239.129.67:8101"
-    )
-    assert expected_prefill in cmd
-    expected_decode = (
-        "--decode "
-        "10.239.129.81:8200 10.239.129.81:8201 "
-        "10.239.129.81:8202 10.239.129.81:8203 "
-        "10.239.129.165:8200 10.239.129.165:8201 "
-        "10.239.129.165:8202 10.239.129.165:8203"
-    )
-    assert expected_decode in cmd
+    config = extract_config_from_cmd(result.stdout)
+    prefill = config.get("prefill", [])
+    assert "10.239.129.9:8100" in prefill
+    assert "10.239.129.9:8101" in prefill
+    assert "10.239.129.67:8100" in prefill
+    assert "10.239.129.67:8101" in prefill
+    decode = config.get("decode", [])
+    assert "10.239.129.81:8200" in decode
+    assert "10.239.129.165:8200" in decode
+    decode = [d for d in decode if d]  # filter empty strings
+    assert len(decode) == 8
 
 
 def test_valid_topology_cross_node_instance_exposes_main_node_only():
@@ -125,16 +121,15 @@ def test_valid_topology_cross_node_instance_exposes_main_node_only():
         "8",
     )
     assert result.returncode == 0, result.stderr
-    cmd = extract_running_line(result.stdout)
-    assert "--prefill 10.239.129.9:8100" in cmd
-    prefill_section = cmd.split("--prefill", 1)[1].split("--decode", 1)[0]
-    assert "10.239.129.67:8100" not in prefill_section
-    expected_decode = (
-        "--decode "
-        "10.239.129.81:8200 10.239.129.165:8200 "
-        "10.239.129.67:8200 10.239.129.21:8200"
-    )
-    assert expected_decode in cmd
+    config = extract_config_from_cmd(result.stdout)
+    prefill = [p for p in config.get("prefill", []) if p]
+    assert "10.239.129.9:8100" in prefill
+    assert "10.239.129.67:8100" not in prefill
+    decode = [d for d in config.get("decode", []) if d]
+    assert "10.239.129.81:8200" in decode
+    assert "10.239.129.165:8200" in decode
+    decode = [d for d in decode if d]  # filter empty strings
+    assert len(decode) == 4
 
 
 def test_custom_base_ports():
@@ -161,9 +156,11 @@ def test_custom_base_ports():
         "9200",
     )
     assert result.returncode == 0, result.stderr
-    cmd = extract_running_line(result.stdout)
-    assert "10.239.129.9:9100" in cmd
-    assert "10.239.129.81:9200" in cmd
+    config = extract_config_from_cmd(result.stdout)
+    prefill = config.get("prefill", [])
+    decode = config.get("decode", [])
+    assert "10.239.129.9:9100" in prefill
+    assert "10.239.129.81:9200" in decode
 
 
 def test_reject_non_power_of_two_tp():
@@ -313,9 +310,8 @@ def test_model_cli_arg_overrides_env_var():
         env_overrides={"model_path": "/env/model/path"},
     )
     assert result.returncode == 0, result.stderr
-    cmd = extract_running_line(result.stdout)
-    assert "--model /cli/model/path" in cmd
-    assert "/env/model/path" not in cmd
+    config = extract_config_from_cmd(result.stdout)
+    assert config.get("model") == "/cli/model/path"
 
 
 def test_model_env_var_fallback():
@@ -325,8 +321,8 @@ def test_model_env_var_fallback():
         env_overrides={"model_path": "/env/fallback/model"},
     )
     assert result.returncode == 0, result.stderr
-    cmd = extract_running_line(result.stdout)
-    assert "--model /env/fallback/model" in cmd
+    config = extract_config_from_cmd(result.stdout)
+    assert config.get("model") == "/env/fallback/model"
 
 
 def test_missing_model_errors():

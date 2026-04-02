@@ -62,11 +62,13 @@ class TestSubcommandParser:
     def test_validate_config_valid(self, tmp_path):
         p = tmp_path / "valid.yaml"
         p.write_text(
-            textwrap.dedent("""\
+            textwrap.dedent(
+                """\
             model: /path/model
             decode:
               - "10.0.0.1:8000"
-        """)
+        """
+            )
         )
         config = ProxyConfig.from_yaml(str(p))
         assert config.model == "/path/model"
@@ -84,9 +86,7 @@ class TestSubcommandParser:
 
     def test_log_level_override(self):
         parser = _build_parser()
-        args = parser.parse_args(
-            ["proxy", "-c", "x.yaml", "--log-level", "debug"]
-        )
+        args = parser.parse_args(["proxy", "-c", "x.yaml", "--log-level", "debug"])
         assert args.log_level == "debug"
 
     def test_no_config_file_error_message(self, tmp_path, monkeypatch):
@@ -101,8 +101,16 @@ class TestSubcommandParser:
 
     def test_old_args_rejected(self):
         parser = _build_parser()
-        for flag in ("--model", "-m", "--prefill", "-p", "--decode", "-d",
-                      "--roundrobin", "--generator_on_p_node"):
+        for flag in (
+            "--model",
+            "-m",
+            "--prefill",
+            "-p",
+            "--decode",
+            "-d",
+            "--roundrobin",
+            "--generator_on_p_node",
+        ):
             with pytest.raises(SystemExit):
                 parser.parse_args(["proxy", flag, "value"])
 

@@ -136,7 +136,8 @@ build_instance_endpoints() {
         endpoints+=("${ip_list[$main_node]}:${port}")
     done
 
-    printf '%s ' "${endpoints[@]}"
+    printf '%s
+' "${endpoints[@]}" | paste -sd' ' -
 }
 
 PREFILL_NODES=""
@@ -271,24 +272,42 @@ DECODE_ARGS=$(build_instance_endpoints \
     "$DECODE_BASE_PORT" \
     DECODE_IPS)
 
+
+# Generate a YAML list from space-separated args
+_to_yaml_list() {
+    local args="$1"
+    for item in $args; do
+        [[ -n "$item" && "$item" != "" ]] && echo "  - \"$item\""
+    done
+}
+
 case "$MODE" in
     benchmark)
         # Generate YAML config
         CONFIG_FILE="/tmp/xpyd_proxy_$$.yaml"
+        # Convert space-separated args to YAML list format
+        _yaml_prefill=$(echo "$PREFILL_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
+        _yaml_decode=$(echo "$DECODE_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
         cat > "$CONFIG_FILE" <<YAMLEOF
 model: "$MODEL_PATH"
-prefill: [$PREFILL_ARGS]
-decode: [$DECODE_ARGS]
+prefill:
+$_yaml_prefill
+decode:
+$_yaml_decode
 port: $DEFAULT_PROXY_PORT
 YAMLEOF
         CMD="python3 -m xpyd.proxy proxy --config $CONFIG_FILE"
         ;;
     advanced|basic|benchmark_decode)
         CONFIG_FILE="/tmp/xpyd_proxy_$$.yaml"
+        _yaml_prefill=$(echo "$PREFILL_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
+        _yaml_decode=$(echo "$DECODE_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
         cat > "$CONFIG_FILE" <<YAMLEOF
 model: "$MODEL_PATH"
-prefill: [$PREFILL_ARGS]
-decode: [$DECODE_ARGS]
+prefill:
+$_yaml_prefill
+decode:
+$_yaml_decode
 port: $DEFAULT_PROXY_PORT
 YAMLEOF
         CMD="python3 -m xpyd.proxy proxy --config $CONFIG_FILE"
