@@ -571,23 +571,37 @@ class Proxy:
 
     def get_total_token_length(self, prompt):
         fake_len = 100
+        if prompt is None:
+            return 0
         if isinstance(prompt, str):
             return len(self.tokenizer(prompt)["input_ids"])
         elif isinstance(prompt, list):
+            if len(prompt) == 0:
+                return 0
+            # Single flat list of ints — already tokenized token IDs
+            if all(isinstance(x, int) for x in prompt):
+                return len(prompt)
             if all(isinstance(p, str) for p in prompt):
                 return sum(len(self.tokenizer(p)["input_ids"]) for p in prompt)
-            elif (all(isinstance(p, list) and
-                all(isinstance(x, int) for x in p) for p in prompt)):
-                # Already tokenized
+            if all(
+                isinstance(p, list) and all(isinstance(x, int) for x in p)
+                for p in prompt
+            ):
+                # Nested list of ints — multiple already-tokenized sequences
                 return sum(len(p) for p in prompt)
-            elif all(isinstance(p, dict) and "text" in p for p in prompt):
-                return sum(len(self.tokenizer(p["text"])["input_ids"]) for p in prompt)
-            else:
-                logger.error(
-                    "Unsupported prompt format: %s / nested types. Value: %r",
-                    type(prompt), prompt
-                )
-                return fake_len
+            if all(isinstance(p, dict) for p in prompt):
+                # Multimodal content array — extract text parts only
+                total = 0
+                for p in prompt:
+                    if "text" in p:
+                        total += len(self.tokenizer(p["text"])["input_ids"])
+                return total
+            logger.error(
+                "Unsupported prompt format: %s / nested types. Value: %r",
+                type(prompt),
+                prompt,
+            )
+            return fake_len
         else:
             logger.error("Unsupported prompt type: %s", type(prompt))
             return fake_len
@@ -648,18 +662,26 @@ class Proxy:
     def _extract_prompt_info(self, request, is_chat):
         """Extract prompt metrics. Returns (total_length, max_tokens, prompt_text)."""
         if is_chat:
-            total_length = sum(
-                self.get_total_token_length(msg['content'])
-                for msg in request['messages']
-            )
+            total_length = 0
+            prompt_parts = []
+            for msg in request["messages"]:
+                content = msg.get("content")
+                if content is None:
+                    continue
+                if isinstance(content, str):
+                    total_length += self.get_total_token_length(content)
+                    prompt_parts.append(content)
+                elif isinstance(content, list):
+                    # Multimodal content array — extract text parts
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            total_length += self.get_total_token_length(text)
+                            prompt_parts.append(text)
             max_tokens = request.get("max_completion_tokens", 0)
             if max_tokens == 0:
                 max_tokens = request.get("max_tokens", 0)
-            prompt_text = " ".join(
-                msg.get("content", "")
-                for msg in request.get("messages", [])
-                if isinstance(msg.get("content"), str)
-            )
+            prompt_text = " ".join(prompt_parts)
         else:
             prompt = request.get("prompt")
             total_length = self.get_total_token_length(prompt)
@@ -741,7 +763,10 @@ class Proxy:
                     decode_instance=decode_instance,
                     req_len=total_length
                 )
-                return None
+                return JSONResponse(
+                    {"error": {"message": "No available instance can handle the request", "type": "proxy_error"}},
+                    status_code=503,
+                )
 
             value = b''
             try:

@@ -13,7 +13,9 @@ def server():
     """Create a Proxy with minimal mocking."""
     with patch("core.MicroPDProxyServer.Proxy.__init__", return_value=None):
         srv = Proxy.__new__(Proxy)
-    srv.get_total_token_length = MagicMock(side_effect=lambda x: len(x) if isinstance(x, str) else 0)
+    srv.get_total_token_length = MagicMock(
+        side_effect=lambda x: len(x) if isinstance(x, str) else 0
+    )
     return srv
 
 
@@ -124,6 +126,88 @@ class TestExtractPromptInfo:
         assert "world" in prompt_text
         assert "None" not in prompt_text
 
+    def test_chat_null_content_zero_length(self, server):
+        """Messages with None content should contribute 0 to total_length."""
+        total_length, _, _ = server._extract_prompt_info(
+            {
+                "messages": [
+                    {"role": "assistant", "content": None},
+                    {"role": "user", "content": "hi"},
+                ],
+            },
+            is_chat=True,
+        )
+        assert total_length == 2  # len("hi") via mock
+
+    def test_chat_multimodal_content_array(self, server):
+        """Multimodal content (list of parts) should extract text parts only."""
+        total_length, _, prompt_text = server._extract_prompt_info(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What is this?"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/img.png"},
+                            },
+                        ],
+                    },
+                ],
+            },
+            is_chat=True,
+        )
+        assert total_length == len("What is this?")
+        assert "What is this?" in prompt_text
+
+    def test_completion_token_ids(self, server):
+        """Flat list of ints (already tokenized) should return its length."""
+        server.get_total_token_length = MagicMock(
+            side_effect=lambda x: len(x) if isinstance(x, (str, list)) else 0
+        )
+        total_length, _, _ = server._extract_prompt_info(
+            {"prompt": [101, 102, 103]},
+            is_chat=False,
+        )
+        assert total_length == 3
+
+
+class TestGetTotalTokenLength:
+    """Tests for get_total_token_length edge cases.
+
+    These tests call the real method, so we mock self.tokenizer instead.
+    """
+
+    @pytest.fixture
+    def server_with_tokenizer(self):
+        with patch("core.MicroPDProxyServer.Proxy.__init__", return_value=None):
+            srv = Proxy.__new__(Proxy)
+        srv.tokenizer = MagicMock(
+            side_effect=lambda text: {"input_ids": list(range(len(text)))}
+        )
+        return srv
+
+    def test_none_input(self, server_with_tokenizer):
+        assert server_with_tokenizer.get_total_token_length(None) == 0
+
+    def test_empty_list(self, server_with_tokenizer):
+        assert server_with_tokenizer.get_total_token_length([]) == 0
+
+    def test_flat_int_list(self, server_with_tokenizer):
+        """Single flat list of ints — already tokenized token IDs."""
+        assert server_with_tokenizer.get_total_token_length([101, 102, 103]) == 3
+
+    def test_multimodal_dict_list(self, server_with_tokenizer):
+        """List of dicts with text parts — multimodal content."""
+        result = server_with_tokenizer.get_total_token_length(
+            [
+                {"type": "text", "text": "hello"},
+                {"type": "image_url", "image_url": {"url": "http://example.com"}},
+            ]
+        )
+        assert result == 5  # len("hello") via mock tokenizer
+
 
 class TestBuildKvPrepareRequest:
     """Tests for _build_kv_prepare_request."""
@@ -153,9 +237,13 @@ class TestHandleCompletion:
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(side_effect=ValueError("bad json"))
 
-        with patch("core.MicroPDProxyServer.track_request_start", return_value=0), \
-             patch("core.MicroPDProxyServer.track_request_end"):
-            result = await server._handle_completion("/v1/completions", raw_request, is_chat=False)
+        with (
+            patch("core.MicroPDProxyServer.track_request_start", return_value=0),
+            patch("core.MicroPDProxyServer.track_request_end"),
+        ):
+            result = await server._handle_completion(
+                "/v1/completions", raw_request, is_chat=False
+            )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 400
@@ -165,9 +253,13 @@ class TestHandleCompletion:
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(return_value={})
 
-        with patch("core.MicroPDProxyServer.track_request_start", return_value=0), \
-             patch("core.MicroPDProxyServer.track_request_end"):
-            result = await server._handle_completion("/v1/completions", raw_request, is_chat=False)
+        with (
+            patch("core.MicroPDProxyServer.track_request_start", return_value=0),
+            patch("core.MicroPDProxyServer.track_request_end"),
+        ):
+            result = await server._handle_completion(
+                "/v1/completions", raw_request, is_chat=False
+            )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 400
@@ -184,11 +276,16 @@ class TestHandleCompletion:
         server.decode_cycler = MagicMock()
         server.exception_handler = MagicMock()
 
-        with patch("core.MicroPDProxyServer.track_request_start", return_value=0), \
-             patch("core.MicroPDProxyServer.track_request_end"), \
-             patch("core.MicroPDProxyServer.log_info_green"), \
-             patch("core.MicroPDProxyServer.log_info_red"):
-            result = await server._handle_completion("/v1/completions", raw_request, is_chat=False)
+        with (
+            patch("core.MicroPDProxyServer.track_request_start", return_value=0),
+            patch("core.MicroPDProxyServer.track_request_end"),
+            patch("core.MicroPDProxyServer.log_info_green"),
+            patch("core.MicroPDProxyServer.log_info_red"),
+        ):
+            result = await server._handle_completion(
+                "/v1/completions", raw_request, is_chat=False
+            )
 
-        assert result is None
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 503
         server.exception_handler.assert_called_once()
