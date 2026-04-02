@@ -181,3 +181,51 @@ class TestSchedulerNoInstanceForModel:
             model="nonexistent",
         )
         assert result is None
+
+
+class TestSchedulerLoadBalanceWithinModel:
+    """test_scheduler_load_balance_within_model
+
+    With 2 decode instances for model A, requests should only go to
+    model A instances (not model B), verifying model-based filtering.
+    """
+
+    def test_routes_only_to_correct_model_instances(self):
+        from xpyd.scheduler.load_balanced import LoadBalancedScheduler
+
+        reg = InstanceRegistry()
+        reg.add("decode", "10.0.0.1:9001", model="llama-3")
+        reg.add("decode", "10.0.0.2:9002", model="llama-3")
+        reg.add("decode", "10.0.0.3:9003", model="deepseek-r1")
+        for addr in ["10.0.0.1:9001", "10.0.0.2:9002", "10.0.0.3:9003"]:
+            reg.mark_healthy(addr)
+
+        all_decode = ["10.0.0.1:9001", "10.0.0.2:9002", "10.0.0.3:9003"]
+
+        with patch(
+            "xpyd.scheduler.load_balanced.query_instance_model_len",
+            return_value=[131072] * 3,
+        ):
+            sched = LoadBalancedScheduler(
+                [],
+                all_decode,
+                registry=reg,
+            )
+
+        # All requests with model="llama-3" must only go to llama-3 instances
+        for _ in range(20):
+            cycler = itertools.cycle(all_decode)
+            result = sched.schedule(
+                cycler,
+                is_prompt=False,
+                request_len=100,
+                max_tokens=100,
+                model="llama-3",
+            )
+            assert result in ("10.0.0.1:9001", "10.0.0.2:9002")
+            # Release the slot
+            if result:
+                sched.schedule_completion(
+                    decode_instance=result,
+                    req_len=100,
+                )

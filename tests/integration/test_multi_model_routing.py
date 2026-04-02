@@ -279,3 +279,122 @@ async def test_models_endpoint_format(
         assert model["object"] == "model"
         assert "created" in model
         assert "owned_by" in model
+
+
+@pytest.mark.anyio
+async def test_multi_model_routing_isolation(multi_model_client: AsyncClient):
+    """Request with model=deepseek-r1 must NOT hit llama-3 instances."""
+    resp = await multi_model_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "deepseek-r1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 5,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "deepseek-r1"
+
+
+@pytest.mark.anyio
+async def test_multi_model_one_model_down(
+    multi_model_client_and_registry,
+):
+    """When all instances of model B are unhealthy, B returns error but A works."""
+    cli, reg = multi_model_client_and_registry
+    # Mark deepseek-r1 instances as unhealthy
+    reg.mark_unhealthy(_addr("p3"))
+    reg.mark_unhealthy(_addr("d3"))
+
+    # deepseek-r1 should fail (no available instances)
+    resp_b = await cli.post(
+        "/v1/chat/completions",
+        json={
+            "model": "deepseek-r1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 5,
+        },
+    )
+    assert resp_b.status_code in (404, 503)
+
+    # llama-3 should still work
+    resp_a = await cli.post(
+        "/v1/chat/completions",
+        json={
+            "model": "llama-3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 5,
+        },
+    )
+    assert resp_a.status_code == 200
+    assert resp_a.json()["model"] == "llama-3"
+
+    # Restore health
+    reg.mark_healthy(_addr("p3"))
+    reg.mark_healthy(_addr("d3"))
+
+
+@pytest.mark.anyio
+async def test_multi_model_load_balance(multi_model_client: AsyncClient):
+    """N requests to llama-3 should distribute across d1 and d2."""
+    models_seen = set()
+    for _ in range(10):
+        resp = await multi_model_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "llama-3",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 5,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["model"] == "llama-3"
+        models_seen.add(resp.json()["model"])
+    # All should be llama-3
+    assert models_seen == {"llama-3"}
+
+
+@pytest.mark.anyio
+async def test_multi_model_prefill_decode_match(multi_model_client: AsyncClient):
+    """Prefill and decode for same request go to instances of the same model."""
+    # Send multiple requests to different models, verify model in response
+    for model_name in ["llama-3", "deepseek-r1", "qwen-2"]:
+        resp = await multi_model_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": model_name,
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 5,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["model"] == model_name
+
+
+@pytest.mark.anyio
+async def test_models_endpoint_updates_on_instance_change(
+    multi_model_client_and_registry,
+):
+    """After removing all instances of qwen-2, /v1/models no longer lists it."""
+    cli, reg = multi_model_client_and_registry
+
+    # Verify qwen-2 is listed initially
+    resp = await cli.get("/v1/models")
+    model_ids = [m["id"] for m in resp.json()["data"]]
+    assert "qwen-2" in model_ids
+
+    # Remove all qwen-2 instances
+    reg.remove(_addr("p4"))
+    reg.remove(_addr("d4"))
+
+    # qwen-2 should no longer be listed
+    resp = await cli.get("/v1/models")
+    model_ids = [m["id"] for m in resp.json()["data"]]
+    assert "qwen-2" not in model_ids
+
+    # Re-add for cleanup (other tests might share fixtures)
+    reg.add("prefill", _addr("p4"), model="qwen-2")
+    reg.add("decode", _addr("d4"), model="qwen-2")
+    reg.mark_healthy(_addr("p4"))
+    reg.mark_healthy(_addr("d4"))

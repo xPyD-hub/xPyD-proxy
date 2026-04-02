@@ -176,6 +176,16 @@ class ProxyConfig(BaseModel):
     def _require_decode(self) -> "ProxyConfig":
         # Multi-model config: instances or models field provides everything
         if self.instances or self.models:
+            # Still require at least one decode entry
+            if self.instances:
+                has_decode = any(
+                    e.role == "decode" for e in self.instances
+                )
+                if not has_decode:
+                    raise ValueError(
+                        "Please specify at least one decode node "
+                        "in the instances list."
+                    )
             return self
         if not self.decode:
             raise ValueError(
@@ -198,6 +208,10 @@ class ProxyConfig(BaseModel):
             expanded: List[InstanceEntry] = []
             for entry in self.models:
                 name = entry.get("name", "")
+                if not name:
+                    raise ValueError(
+                        "Each model in 'models' must have a non-empty 'name'."
+                    )
                 for addr in entry.get("prefill", []):
                     expanded.append(InstanceEntry(
                         address=addr, role="prefill", model=name,
@@ -374,7 +388,11 @@ class ProxyConfig(BaseModel):
                 scheduling_config[strategy_name] = strategy_section
 
         # 3. Reject unknown YAML keys early
-        known_fields = set(_arg_defaults.keys()) | {"health_check"}
+        known_fields = set(_arg_defaults.keys()) | {
+            "health_check", "instances", "models",
+            "scheduling", "scheduling_config",
+            "circuit_breaker", "retry",
+        }
         unknown = set(yaml_data.keys()) - known_fields
         if unknown:
             raise ValueError(
@@ -443,6 +461,12 @@ class ProxyConfig(BaseModel):
         # 8. Retry config (YAML only, no CLI override)
         if retry_raw is not None:
             merged["retry"] = ResilienceConfig(**retry_raw)
+
+        # 9. Multi-model config (YAML only, no CLI override)
+        if "instances" in yaml_data:
+            merged["instances"] = yaml_data["instances"]
+        if "models" in yaml_data:
+            merged["models"] = yaml_data["models"]
 
         return cls(**merged)
 
