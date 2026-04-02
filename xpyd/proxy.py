@@ -17,12 +17,12 @@ import json
 import logging
 import os
 import sys
-from typing import Callable, Optional
+from collections.abc import AsyncGenerator
+from typing import Any, Callable, Optional
 
 import aiohttp
 import requests
 import uvicorn
-from colorlog.escape_codes import escape_codes
 from fastapi import (APIRouter, FastAPI, HTTPException,
                      Request)
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -53,22 +53,6 @@ logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 logger.propagate = False
 
-def log_info_color(color, msg, *args):
-    """Generic colored log with parameterized message."""
-    msg_colored = f"{escape_codes[color]}{msg}{escape_codes['reset']}"
-    logger.info(msg_colored, *args)
-
-def log_info_blue(msg, *args):
-    log_info_color('cyan', msg, *args)
-
-def log_info_green(msg, *args):
-    log_info_color('green', msg, *args)
-
-def log_info_yellow(msg, *args):
-    log_info_color('yellow', msg, *args)
-
-def log_info_red(msg, *args):
-    log_info_color('red', msg, *args)
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=None,
                                         connect=None,
@@ -185,17 +169,17 @@ class Proxy:
         self.tokenizer = AutoTokenizer.from_pretrained(model)
 
     def on_done(self,
-                prefill_instance: str = None,
-                decode_instance: str = None,
-                req_len: int = None):
+                prefill_instance: Optional[str] = None,
+                decode_instance: Optional[str] = None,
+                req_len: Optional[int] = None) -> None:
         self.schedule_completion(prefill_instance,
                                  decode_instance,
                                  req_len=req_len)
 
-    def setup_routes(self):
+    def setup_routes(self) -> None:
         register_routes(self.router, self)
 
-    async def forward_request(self, url, data, use_chunked=True):
+    async def forward_request(self, url: str, data: dict, use_chunked: bool = True) -> AsyncGenerator[bytes, None]:
         async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
             headers = {
                 "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
@@ -255,13 +239,13 @@ class Proxy:
             decode_instance=decode_instance,
             req_len=req_len)
 
-    def get_total_token_length(self, prompt):
+    def get_total_token_length(self, prompt: Any) -> int:
         """Compute total token length — delegates to :func:`xpyd.utils.get_total_token_length`."""
         from xpyd.utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 
-    def exception_handler(self, prefill_instance=None, decode_instance=None, req_len=None):
+    def exception_handler(self, prefill_instance: Optional[str] = None, decode_instance: Optional[str] = None, req_len: Optional[int] = None) -> None:
         if prefill_instance or decode_instance:
             try:
                 self.on_done(
@@ -279,7 +263,7 @@ class Proxy:
                 logger.error(f"Error releasing instances: {e}")
                 raise
 
-    def _record_failure(self, prefill_instance=None, decode_instance=None):
+    def _record_failure(self, prefill_instance: Optional[str] = None, decode_instance: Optional[str] = None) -> None:
         """Record request failure with registry for circuit breaker tracking."""
         if self.registry is not None:
             if prefill_instance:
@@ -287,7 +271,7 @@ class Proxy:
             if decode_instance:
                 self.registry.record_failure(decode_instance)
 
-    async def get_from_instance(self, path: str, is_full_instancelist: int = 0):
+    async def get_from_instance(self, path: str, is_full_instancelist: int = 0) -> JSONResponse:
         """Fetch data from backend instance(s) via GET."""
         if not self.prefill_instances:
             return JSONResponse(content={"error": "No instances available"}, status_code=500)
@@ -320,7 +304,7 @@ class Proxy:
 
         return JSONResponse(content=results, status_code=200)
 
-    async def post_to_instance(self, request: Request, path: str, json_template: dict):
+    async def post_to_instance(self, request: Request, path: str, json_template: dict) -> JSONResponse:
         """Forward a POST request to a backend instance."""
         body = await request.json()
 

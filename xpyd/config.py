@@ -206,8 +206,12 @@ class ProxyConfig(BaseModel):
 
     @classmethod
     def from_args(cls, args) -> "ProxyConfig":
-        """Build a ``ProxyConfig`` from an ``argparse.Namespace``,
-        optionally merging a YAML config file.
+        """Build a ``ProxyConfig`` from an ``argparse.Namespace``.
+
+        .. deprecated::
+            This method is retained for backward compatibility with existing
+            test infrastructure.  Production code should use
+            :meth:`from_yaml` instead.
 
         Precedence: CLI args > environment variables > YAML > defaults.
         """

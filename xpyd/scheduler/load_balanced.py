@@ -10,42 +10,24 @@ from xpyd.scheduler.scheduler_base import SchedulingPolicy
 logger = logging.getLogger("xpyd.proxy")
 
 try:
-    from xpyd.proxy import (
-        log_info_blue,
-        log_info_red,
-        log_info_yellow,
-        query_instance_model_len,
-    )
+    from xpyd.proxy import query_instance_model_len
 except ImportError:
-    # Circular import at init time — define colored fallbacks inline
-    try:
-        from colorlog.escape_codes import escape_codes as _esc
-    except ImportError:  # pragma: no cover
-        _esc = {}  # type: ignore[assignment]
-
-    if not logger.handlers:
-        _handler = logging.StreamHandler()
-        _handler.setFormatter(
-            logging.Formatter(
-                "[%(asctime)s] %(levelname)s - %(message)s",
-                "%Y-%m-%d %H:%M:%S",
-            )
-        )
-        logger.addHandler(_handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-
-    def log_info_blue(msg, *a):
-        logger.info(f"{_esc.get('blue', '')}{msg}{_esc.get('reset', '')}", *a)
-
-    def log_info_red(msg, *a):
-        logger.info(f"{_esc.get('red', '')}{msg}{_esc.get('reset', '')}", *a)
-
-    def log_info_yellow(msg, *a):
-        logger.info(f"{_esc.get('yellow', '')}{msg}{_esc.get('reset', '')}", *a)
 
     def query_instance_model_len(instances, timeout=5.0):
         return [131072] * len(instances)
+
+# Ensure logger has a handler for scheduler output
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter(
+            "[%(asctime)s] %(levelname)s - %(message)s",
+            "%Y-%m-%d %H:%M:%S",
+        )
+    )
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
 class LoadBalancedScheduler(SchedulingPolicy):
@@ -109,7 +91,7 @@ class LoadBalancedScheduler(SchedulingPolicy):
             and (available is None or self.prefill_instances[i] in available)
         ]
         if not candidates:
-            log_info_red(
+            logger.warning(
                 "No prefill instance can handle request_len=%d, max_tokens=%d",
                 request_len,
                 max_tokens,
@@ -124,7 +106,7 @@ class LoadBalancedScheduler(SchedulingPolicy):
         self.prefill_bs_counter[min_index] += 1
         self.prefill_utils_counter[min_index] += request_len
         self.prefill_schedule_index += 1
-        log_info_yellow(
+        logger.info(
             f"<schedule prefill {self.prefill_schedule_index}> "
             f"instance = {min_index}, min_tokens = {min_value}",
         )
@@ -141,7 +123,7 @@ class LoadBalancedScheduler(SchedulingPolicy):
             and (available is None or self.decode_instances[i] in available)
         ]
         if not candidates:
-            log_info_red(
+            logger.warning(
                 "No decode instance can handle request_len=%d, max_tokens=%d",
                 request_len,
                 max_tokens,
@@ -164,14 +146,14 @@ class LoadBalancedScheduler(SchedulingPolicy):
         self.decode_bs_counter[min_index] += 1
         self.decode_kv_utils_counter[min_index] += request_len
         self.decode_schedule_index += 1
-        log_info_blue(
+        logger.info(
             f"<schedule decode {self.decode_schedule_index}> "
             f"instance = {min_index}, min_batch = {min_value}",
         )
-        log_info_blue(
+        logger.info(
             f"<schedule decode> decode_bs_counter: {self.decode_bs_counter}"
         )
-        log_info_blue(
+        logger.info(
             f"<schedule decode> "
             f"decode_kv_utils_counter: {self.decode_kv_utils_counter}",
         )
@@ -196,14 +178,14 @@ class LoadBalancedScheduler(SchedulingPolicy):
             return
 
         self.prefill_schedule_completion_index += 1
-        log_info_yellow(
+        logger.info(
             f"<Prefill completed {self.prefill_schedule_completion_index}> "
             f"instance = {index}, req_len={req_len}",
         )
 
         self.prefill_bs_counter[index] -= 1
         if all(c == 0 for c in self.prefill_bs_counter):
-            log_info_red("<Prefill in idle state>")
+            logger.warning("<Prefill in idle state>")
             self.prefill_utils_counter = [0] * len(self.prefill_instances)
         else:
             self.prefill_utils_counter[index] -= req_len
@@ -215,22 +197,22 @@ class LoadBalancedScheduler(SchedulingPolicy):
             return
 
         self.decode_schedule_completion_index += 1
-        log_info_blue(
+        logger.info(
             f"<Decode completed {self.decode_schedule_completion_index}> "
             f"instance = {index}, req_len={req_len}",
         )
 
         self.decode_bs_counter[index] -= 1
         if all(c == 0 for c in self.decode_bs_counter):
-            log_info_red("<Decode in idle state>")
+            logger.warning("<Decode in idle state>")
             self.decode_kv_utils_counter = [0] * len(self.decode_instances)
         else:
             self.decode_kv_utils_counter[index] -= req_len
-            log_info_blue(
+            logger.info(
                 f"<schedule_completion decode> "
                 f"decode_bs_counter: {self.decode_bs_counter}",
             )
-            log_info_blue(
+            logger.info(
                 f"<schedule_completion decode> "
                 f"decode_kv_utils_counter: {self.decode_kv_utils_counter}",
             )
