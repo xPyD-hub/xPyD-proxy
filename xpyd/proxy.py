@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from transformers import AutoTokenizer
 from fastapi.middleware.cors import CORSMiddleware
 from xpyd.config import ProxyConfig
+from xpyd.errors import INVALID_REQUEST, SERVER_ERROR, error_response
 from xpyd.discovery import NodeDiscovery
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
@@ -58,25 +59,6 @@ AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=None,
                                         connect=None,
                                         sock_read=None,
                                         sock_connect=None)
-
-def query_instance_model_len(instances, timeout=5.0):
-    """
-    Query each instance for its max_model_len.
-    """
-    model_lens = []
-    for inst in instances:
-        try:
-            url = f"http://{inst}/v1/models"
-            resp = requests.get(url, timeout=timeout)
-            resp.raise_for_status()
-            data = resp.json()["data"][0]
-            max_len = data.get("max_model_len", 0)
-            model_lens.append(max_len)
-            logger.info("Instance %s model_len: %d", inst, max_len)
-        except Exception as e:
-            logger.warning("Failed to get model_len from %s: %s", inst, e)
-            sys.exit(1)
-    return model_lens
 
 async def P_first_token_generator(generator_p,
                                   generator_d,
@@ -274,7 +256,7 @@ class Proxy:
     async def get_from_instance(self, path: str, is_full_instancelist: int = 0) -> JSONResponse:
         """Fetch data from backend instance(s) via GET."""
         if not self.prefill_instances:
-            return JSONResponse(content={"error": "No instances available"}, status_code=500)
+            return error_response("No instances available", SERVER_ERROR, 500)
 
         if is_full_instancelist == 0:
             instances = [self.prefill_instances[0]]
@@ -299,7 +281,7 @@ class Proxy:
                             "data": data,
                         }
                 except Exception as e:
-                    results[inst] = {"status": 500, "error": str(e)}
+                    results[inst] = {"status": 500, "error": str(e)}  # per-instance inline error
                     logger.warning("Failed to fetch %s from %s: %s", path, inst, e)
 
         return JSONResponse(content=results, status_code=200)
@@ -310,9 +292,9 @@ class Proxy:
 
         missing = [k for k in json_template.keys() if k not in body]
         if missing:
-            return JSONResponse(
-                {"error": f"Missing required fields: {', '.join(missing)}"},
-                status_code=400,
+            return error_response(
+                f"Missing required fields: {', '.join(missing)}",
+                INVALID_REQUEST, 400,
             )
 
         payload = json_template.copy()
@@ -327,11 +309,8 @@ class Proxy:
                 except aiohttp.ContentTypeError:
                     content = {"raw": await resp.text()}
                 return JSONResponse(content, status_code=resp.status)
-        except Exception as e:
-            return JSONResponse(
-                {"error": f"Failed to fetch {url}, reason: {str(e)}"},
-                status_code=500,
-            )
+        except Exception:
+            return error_response(f"Failed to forward request to {url}", SERVER_ERROR, 500)
 
     async def validate_instance(self, instance: str) -> bool:
         """Validate that an instance is reachable and serves the correct model."""

@@ -78,10 +78,18 @@ class TestPolicyRegistry:
 
     def test_create_returns_correct_type(self):
         """create() returns an instance of the registered class."""
+        from unittest.mock import patch
+
         rr = default_registry.create("roundrobin")
         assert isinstance(rr, SchedulingPolicy)
 
-        lb = default_registry.create(
-            "loadbalanced", prefill_instances=["p1"], decode_instances=["d1"]
-        )
+        with patch(
+            "xpyd.scheduler.load_balanced.query_instance_model_len",
+            return_value=[131072],
+        ):
+            lb = default_registry.create(
+                "loadbalanced",
+                prefill_instances=["p1"],
+                decode_instances=["d1"],
+            )
         assert isinstance(lb, SchedulingPolicy)

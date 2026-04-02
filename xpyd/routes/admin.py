@@ -21,10 +21,10 @@ def register(router: APIRouter, server) -> None:
         expected_api_key = os.environ.get("ADMIN_API_KEY")
         if not expected_api_key:
             logger.error("ADMIN_API_KEY is not set in the environment.")
-            raise HTTPException(status_code=500, detail={"error": {"message": "Server configuration error", "type": "server_error", "code": None}})
+            raise HTTPException(status_code=500, detail="Server configuration error")
         if x_api_key != expected_api_key:
             logger.warning("Unauthorized access attempt on admin endpoint")
-            raise HTTPException(status_code=403, detail={"error": {"message": "Forbidden: Invalid API Key", "type": "invalid_request_error", "code": None}})
+            raise HTTPException(status_code=403, detail="Forbidden: Invalid API Key")
 
     async def get_status():
         return {

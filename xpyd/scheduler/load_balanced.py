@@ -5,29 +5,10 @@ import itertools
 import logging
 from typing import Optional
 
+from xpyd.utils import query_instance_model_len
 from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger("xpyd.proxy")
-
-try:
-    from xpyd.proxy import query_instance_model_len
-except ImportError:
-
-    def query_instance_model_len(instances, timeout=5.0):
-        return [131072] * len(instances)
-
-# Ensure logger has a handler for scheduler output
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(
-        logging.Formatter(
-            "[%(asctime)s] %(levelname)s - %(message)s",
-            "%Y-%m-%d %H:%M:%S",
-        )
-    )
-    logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
 
 
 class LoadBalancedScheduler(SchedulingPolicy):
@@ -92,9 +73,8 @@ class LoadBalancedScheduler(SchedulingPolicy):
         ]
         if not candidates:
             logger.warning(
-                "No prefill instance can handle request_len=%d, max_tokens=%d",
-                request_len,
-                max_tokens,
+                "No prefill instance available",
+                extra={"request_len": request_len, "max_tokens": max_tokens},
             )
             return None
 
@@ -128,9 +108,8 @@ class LoadBalancedScheduler(SchedulingPolicy):
         ]
         if not candidates:
             logger.warning(
-                "No decode instance can handle request_len=%d, max_tokens=%d",
-                request_len,
-                max_tokens,
+                "No decode instance available",
+                extra={"request_len": request_len, "max_tokens": max_tokens},
             )
             return None
 
@@ -187,13 +166,17 @@ class LoadBalancedScheduler(SchedulingPolicy):
 
         self.prefill_schedule_completion_index += 1
         logger.info(
-            f"<Prefill completed {self.prefill_schedule_completion_index}> "
-            f"instance = {index}, req_len={req_len}",
+            "Prefill completed",
+            extra={
+                "completion_index": self.prefill_schedule_completion_index,
+                "instance": index,
+                "req_len": req_len,
+            },
         )
 
         self.prefill_bs_counter[index] -= 1
         if all(c == 0 for c in self.prefill_bs_counter):
-            logger.warning("<Prefill in idle state>")
+            logger.warning("Prefill in idle state")
             self.prefill_utils_counter = [0] * len(self.prefill_instances)
         else:
             self.prefill_utils_counter[index] -= req_len
@@ -206,21 +189,24 @@ class LoadBalancedScheduler(SchedulingPolicy):
 
         self.decode_schedule_completion_index += 1
         logger.info(
-            f"<Decode completed {self.decode_schedule_completion_index}> "
-            f"instance = {index}, req_len={req_len}",
+            "Decode completed",
+            extra={
+                "completion_index": self.decode_schedule_completion_index,
+                "instance": index,
+                "req_len": req_len,
+            },
         )
 
         self.decode_bs_counter[index] -= 1
         if all(c == 0 for c in self.decode_bs_counter):
-            logger.warning("<Decode in idle state>")
+            logger.warning("Decode in idle state")
             self.decode_kv_utils_counter = [0] * len(self.decode_instances)
         else:
             self.decode_kv_utils_counter[index] -= req_len
             logger.info(
-                f"<schedule_completion decode> "
-                f"decode_bs_counter: {self.decode_bs_counter}",
-            )
-            logger.info(
-                f"<schedule_completion decode> "
-                f"decode_kv_utils_counter: {self.decode_kv_utils_counter}",
+                "Decode completion counters",
+                extra={
+                    "bs_counter": list(self.decode_bs_counter),
+                    "kv_utils_counter": list(self.decode_kv_utils_counter),
+                },
             )
