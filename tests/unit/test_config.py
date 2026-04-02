@@ -234,6 +234,17 @@ class TestMultiModelConfig:
                 ],
             )
 
+    def test_models_shorthand_no_decode_rejected(self):
+        with pytest.raises(ValueError, match="at least one decode"):
+            ProxyConfig(
+                models=[
+                    {
+                        "name": "llama-3",
+                        "prefill": ["10.0.0.1:8000"],
+                    },
+                ],
+            )
+
     def test_instances_no_decode_rejected(self):
         with pytest.raises(ValueError, match="at least one decode"):
             ProxyConfig(

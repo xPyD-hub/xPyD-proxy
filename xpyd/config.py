@@ -222,6 +222,12 @@ class ProxyConfig(BaseModel):
                     ))
             self.instances = expanded
             self.models = None  # consumed
+            # Validate at least one decode entry after expansion
+            if not any(e.role == "decode" for e in expanded):
+                raise ValueError(
+                    "Please specify at least one decode node "
+                    "in the models config."
+                )
         return self
 
     # ------------------------------------------------------------------
