@@ -1,7 +1,8 @@
 """Unit tests for the unified completion handler helpers."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 from starlette.responses import JSONResponse
 
 from core.MicroPDProxyServer import Proxy
