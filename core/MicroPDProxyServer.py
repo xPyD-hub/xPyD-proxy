@@ -266,8 +266,11 @@ class Proxy:
             req_len=req_len)
 
     def get_total_token_length(self, prompt):
-        """Compute total token length — delegates to :func:`core.utils.get_total_token_length`."""
-        from core.utils import get_total_token_length as _get_total_token_length
+        """Compute total token length — delegates to :func:`utils.get_total_token_length`."""
+        try:
+            from .utils import get_total_token_length as _get_total_token_length
+        except ImportError:
+            from utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 
@@ -298,7 +301,7 @@ class Proxy:
                 self.registry.record_failure(decode_instance)
 
     async def get_from_instance(self, path: str, is_full_instancelist: int = 0):
-        """GET a path from backend instances and aggregate results."""
+        """Fetch data from backend instance(s) via GET."""
         if not self.prefill_instances:
             return JSONResponse(content={"error": "No instances available"}, status_code=500)
 
@@ -326,12 +329,12 @@ class Proxy:
                         }
                 except Exception as e:
                     results[inst] = {"status": 500, "error": str(e)}
-                    logger.warning("Failed to fetch %s: %s, continue...", url, e)
+                    logger.warning("Failed to fetch %s from %s: %s", path, inst, e)
 
         return JSONResponse(content=results, status_code=200)
 
-    async def post_to_instance(self, request, path: str, json_template: dict):
-        """POST a request to the first prefill instance with template validation."""
+    async def post_to_instance(self, request: Request, path: str, json_template: dict):
+        """Forward a POST request to a backend instance."""
         body = await request.json()
 
         missing = [k for k in json_template.keys() if k not in body]
@@ -358,6 +361,38 @@ class Proxy:
                 {"error": f"Failed to fetch {url}, reason: {str(e)}"},
                 status_code=500,
             )
+
+    async def validate_instance(self, instance: str) -> bool:
+        """Validate that an instance is reachable and serves the correct model."""
+        url = f"http://{instance}/v1/models"
+        try:
+            async with aiohttp.ClientSession(
+                    timeout=AIOHTTP_TIMEOUT) as client:
+                logger.info("Verifying %s ...", instance)
+                async with client.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if "data" in data and len(data["data"]) > 0:
+                            model_cur = data["data"][0].get("id", "")
+                            if model_cur == self.model:
+                                logger.info("Instance: %s could be added.", instance)
+                                return True
+                            else:
+                                logger.warning(
+                                    "Mismatch model %s : %s != %s",
+                                    instance, model_cur, self.model,
+                                )
+                                return False
+                        else:
+                            return False
+                    else:
+                        return False
+        except aiohttp.ClientError as e:
+            logger.error(str(e))
+            return False
+        except Exception as e:
+            logger.error(str(e))
+            return False
 
 
 

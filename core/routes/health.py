@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Health, info, and metrics route handlers."""
 
-import logging
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
@@ -10,8 +8,6 @@ try:
     from ..metrics import get_metrics
 except ImportError:
     from metrics import get_metrics
-
-logger = logging.getLogger("MicroPDProxyServer")
 
 
 def register(router: APIRouter, server) -> None:
