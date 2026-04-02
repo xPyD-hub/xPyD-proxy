@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy / forward-to-instance route handlers."""
 
-import aiohttp
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -9,63 +8,35 @@ from fastapi.responses import JSONResponse
 def register(router: APIRouter, server) -> None:
     """Register proxy-forward routes on *router*."""
 
-    async def post_to_instance(request: Request, path: str, json_template: dict):
-        body = await request.json()
-
-        missing = [k for k in json_template.keys() if k not in body]
-        if missing:
-            return JSONResponse(
-                {"error": f"Missing required fields: {', '.join(missing)}"},
-                status_code=400,
-            )
-
-        payload = json_template.copy()
-        payload.update(body)
-
-        url = f"http://{server.prefill_instances[0]}{path}"
-        try:
-            async with aiohttp.ClientSession() as session, \
-                    session.post(url, json=payload) as resp:
-                try:
-                    content = await resp.json()
-                except aiohttp.ContentTypeError:
-                    content = {"raw": await resp.text()}
-                return JSONResponse(content, status_code=resp.status)
-        except Exception as e:
-            return JSONResponse(
-                {"error": f"Failed to fetch {url}, reason: {str(e)}"},
-                status_code=500,
-            )
-
     async def post_tokenize(request: Request):
-        return await post_to_instance(request, "/tokenize", {"model": "", "prompt": ""})
+        return await server.post_to_instance(request, "/tokenize", {"model": "", "prompt": ""})
 
     async def post_detokenize(request: Request):
-        return await post_to_instance(request, "/detokenize", {"model": "", "tokens": []})
+        return await server.post_to_instance(request, "/detokenize", {"model": "", "tokens": []})
 
     async def post_embeddings(request: Request):
-        return await post_to_instance(request, "/v1/embeddings", {"model": "", "input": ""})
+        return await server.post_to_instance(request, "/v1/embeddings", {"model": "", "input": ""})
 
     async def post_pooling(request: Request):
-        return await post_to_instance(request, "/pooling", {"model": "", "messages": ""})
+        return await server.post_to_instance(request, "/pooling", {"model": "", "messages": ""})
 
     async def post_score(request: Request):
-        return await post_to_instance(request, "/score", {"model": "", "text_1": "", "text_2": "", "predictions": ""})
+        return await server.post_to_instance(request, "/score", {"model": "", "text_1": "", "text_2": "", "predictions": ""})
 
     async def post_scorev1(request: Request):
-        return await post_to_instance(request, "/v1/score", {"model": "", "text_1": "", "text_2": "", "predictions": ""})
+        return await server.post_to_instance(request, "/v1/score", {"model": "", "text_1": "", "text_2": "", "predictions": ""})
 
     async def post_rerank(request: Request):
-        return await post_to_instance(request, "/rerank", {"model": "", "query": "", "documents": ""})
+        return await server.post_to_instance(request, "/rerank", {"model": "", "query": "", "documents": ""})
 
     async def post_rerankv1(request: Request):
-        return await post_to_instance(request, "/v1/rerank", {"model": "", "query": "", "documents": ""})
+        return await server.post_to_instance(request, "/v1/rerank", {"model": "", "query": "", "documents": ""})
 
     async def post_rerankv2(request: Request):
-        return await post_to_instance(request, "/v2/rerank", {"model": "", "query": "", "documents": ""})
+        return await server.post_to_instance(request, "/v2/rerank", {"model": "", "query": "", "documents": ""})
 
     async def post_invocations(request: Request):
-        return await post_to_instance(request, "/invocations", {"model": "", "prompt": ""})
+        return await server.post_to_instance(request, "/invocations", {"model": "", "prompt": ""})
 
     router.post("/tokenize", response_class=JSONResponse)(post_tokenize)
     router.post("/detokenize", response_class=JSONResponse)(post_detokenize)

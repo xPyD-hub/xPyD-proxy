@@ -191,6 +191,7 @@ class Proxy:
         self.setup_routes()
         self.generator = (P_first_token_generator
                           if generator_on_p_node else D_first_token_generator)
+        self.d_first_token_generator_class = D_first_token_generator
         self.tokenizer = AutoTokenizer.from_pretrained(model)
 
     def on_done(self,
@@ -265,8 +266,11 @@ class Proxy:
             req_len=req_len)
 
     def get_total_token_length(self, prompt):
-        """Compute total token length — delegates to :func:`core.utils.get_total_token_length`."""
-        from core.utils import get_total_token_length as _get_total_token_length
+        """Compute total token length — delegates to :func:`utils.get_total_token_length`."""
+        try:
+            from .utils import get_total_token_length as _get_total_token_length
+        except ImportError:
+            from utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 
@@ -296,65 +300,99 @@ class Proxy:
             if decode_instance:
                 self.registry.record_failure(decode_instance)
 
-    @staticmethod
-    def _validate_completion_request(request, is_chat):
-        """Validate required fields. Returns JSONResponse on error, None on success."""
-        if is_chat:
-            if "messages" not in request:
-                return JSONResponse(
-                    {"error": {"message": "Missing required field: messages", "type": "invalid_request_error"}},
-                    status_code=400,
-                )
-            if not isinstance(request["messages"], list):
-                return JSONResponse(
-                    {"error": {"message": "Field messages must be a list", "type": "invalid_request_error"}},
-                    status_code=400,
-                )
-        else:
-            if "prompt" not in request:
-                return JSONResponse(
-                    {"error": {"message": "Missing required field: prompt", "type": "invalid_request_error"}},
-                    status_code=400,
-                )
-        return None
+    async def get_from_instance(self, path: str, is_full_instancelist: int = 0):
+        """Fetch data from backend instance(s) via GET."""
+        if not self.prefill_instances:
+            return JSONResponse(content={"error": "No instances available"}, status_code=500)
 
-    def _extract_prompt_info(self, request, is_chat):
-        """Extract prompt metrics. Returns (total_length, max_tokens, prompt_text)."""
-        if is_chat:
-            total_length = 0
-            prompt_parts = []
-            for msg in request["messages"]:
-                content = msg.get("content")
-                if content is None:
-                    continue
-                if isinstance(content, str):
-                    total_length += self.get_total_token_length(content)
-                    prompt_parts.append(content)
-                elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text = part.get("text", "")
-                            total_length += self.get_total_token_length(text)
-                            prompt_parts.append(text)
-            max_tokens = request.get("max_completion_tokens", 0)
-            if max_tokens == 0:
-                max_tokens = request.get("max_tokens", 0)
-            prompt_text = " ".join(prompt_parts)
+        if is_full_instancelist == 0:
+            instances = [self.prefill_instances[0]]
         else:
-            prompt = request.get("prompt")
-            total_length = self.get_total_token_length(prompt)
-            max_tokens = request.get("max_tokens", 0)
-            prompt_text = prompt if isinstance(prompt, str) else str(prompt)
-        return total_length, max_tokens, prompt_text
+            instances = self.prefill_instances + self.decode_instances
 
-    @staticmethod
-    def _build_kv_prepare_request(request, is_chat):
-        """Build the KV-prepare request with max_tokens=1."""
-        kv_prepare_request = request.copy()
-        kv_prepare_request["max_tokens"] = 1
-        if is_chat:
-            kv_prepare_request["max_completion_tokens"] = 1
-        return kv_prepare_request
+        results = {}
+        async with aiohttp.ClientSession() as session:
+            for inst in instances:
+                url = f"http://{inst}{path}"
+                try:
+                    async with session.get(url) as resp:
+                        try:
+                            data = await resp.json()
+                            dtype = "json"
+                        except aiohttp.ContentTypeError:
+                            data = await resp.text()
+                            dtype = "text"
+                        results[inst] = {
+                            "status": resp.status,
+                            "type": dtype,
+                            "data": data,
+                        }
+                except Exception as e:
+                    results[inst] = {"status": 500, "error": str(e)}
+                    logger.warning("Failed to fetch %s from %s: %s", path, inst, e)
+
+        return JSONResponse(content=results, status_code=200)
+
+    async def post_to_instance(self, request: Request, path: str, json_template: dict):
+        """Forward a POST request to a backend instance."""
+        body = await request.json()
+
+        missing = [k for k in json_template.keys() if k not in body]
+        if missing:
+            return JSONResponse(
+                {"error": f"Missing required fields: {', '.join(missing)}"},
+                status_code=400,
+            )
+
+        payload = json_template.copy()
+        payload.update(body)
+
+        url = f"http://{self.prefill_instances[0]}{path}"
+        try:
+            async with aiohttp.ClientSession() as session, \
+                    session.post(url, json=payload) as resp:
+                try:
+                    content = await resp.json()
+                except aiohttp.ContentTypeError:
+                    content = {"raw": await resp.text()}
+                return JSONResponse(content, status_code=resp.status)
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to fetch {url}, reason: {str(e)}"},
+                status_code=500,
+            )
+
+    async def validate_instance(self, instance: str) -> bool:
+        """Validate that an instance is reachable and serves the correct model."""
+        url = f"http://{instance}/v1/models"
+        try:
+            async with aiohttp.ClientSession(
+                    timeout=AIOHTTP_TIMEOUT) as client:
+                logger.info("Verifying %s ...", instance)
+                async with client.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if "data" in data and len(data["data"]) > 0:
+                            model_cur = data["data"][0].get("id", "")
+                            if model_cur == self.model:
+                                logger.info("Instance: %s could be added.", instance)
+                                return True
+                            else:
+                                logger.warning(
+                                    "Mismatch model %s : %s != %s",
+                                    instance, model_cur, self.model,
+                                )
+                                return False
+                        else:
+                            return False
+                    else:
+                        return False
+        except aiohttp.ClientError as e:
+            logger.error(str(e))
+            return False
+        except Exception as e:
+            logger.error(str(e))
+            return False
 
 
 

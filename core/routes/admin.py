@@ -24,7 +24,7 @@ def register(router: APIRouter, server) -> None:
                 detail="Server configuration error.",
             )
         if x_api_key != expected_api_key:
-            logger.warning("Unauthorized access attempt with API Key: %s", x_api_key)
+            logger.warning("Unauthorized access attempt on admin endpoint")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: Invalid API Key.",
@@ -58,6 +58,7 @@ def register(router: APIRouter, server) -> None:
             except Exception as e:
                 raise HTTPException(status_code=400, detail="Invalid instance address.") from e
 
+            # validate_instance lives on the Proxy class (MicroPDProxyServer.py)
             is_valid = await server.validate_instance(instance)
             if not is_valid:
                 raise HTTPException(status_code=400, detail="Instance validation failed.")
@@ -92,7 +93,3 @@ def register(router: APIRouter, server) -> None:
     router.get("/status", response_class=JSONResponse)(get_status)
     router.post("/instances/add", dependencies=[Depends(api_key_authenticate)])(add_instance_endpoint)
     router.options("/status")(lambda: None)
-
-    # Expose helpers on server for backward compatibility
-    server.api_key_authenticate = api_key_authenticate
-    server.remove_instance_endpoint = remove_instance_endpoint

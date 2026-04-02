@@ -208,12 +208,7 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
         if request.get("stream", False):
             generator_class = server.generator
         else:
-            try:
-                from ..MicroPDProxyServer import D_first_token_generator
-            except ImportError:
-                from MicroPDProxyServer import D_first_token_generator
-
-            generator_class = D_first_token_generator
+            generator_class = server.d_first_token_generator_class
         final_generator = generator_class(
             generator_p,
             generator_d,
