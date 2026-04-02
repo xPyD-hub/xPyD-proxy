@@ -76,7 +76,7 @@ class TestSubcommandParser:
     def test_validate_config_invalid(self, tmp_path):
         p = tmp_path / "bad.yaml"
         p.write_text("not_a_field: oops\n")
-        with pytest.raises(SystemExit):
+        with pytest.raises(Exception, match="validation error"):
             ProxyConfig.from_yaml(str(p))
 
     def test_port_override(self):

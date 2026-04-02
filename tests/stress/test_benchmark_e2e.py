@@ -17,12 +17,14 @@ import random
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
 import pytest
+import yaml
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +42,14 @@ def _free_port() -> int:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _write_bench_config(model, prefill, decode, port):
+    """Write a temporary YAML config for benchmark proxy launch."""
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    yaml.dump({"model": model, "prefill": prefill, "decode": decode, "port": port}, f)
+    f.close()
+    return f.name
 
 
 def _wait_port(port: int, timeout: float = 20.0) -> bool:
@@ -153,14 +163,14 @@ def cluster():
                     sys.executable,
                     "-m",
                     "xpyd.proxy",
-                    "--model",
-                    MODEL_PATH,
-                    "--prefill",
-                    *[f"127.0.0.1:{p}" for p in prefill_ports],
-                    "--decode",
-                    *[f"127.0.0.1:{p}" for p in decode_ports],
-                    "--port",
-                    str(proxy_port),
+                    "proxy",
+                    "--config",
+                    _write_bench_config(
+                        MODEL_PATH,
+                        [f"127.0.0.1:{p}" for p in prefill_ports],
+                        [f"127.0.0.1:{p}" for p in decode_ports],
+                        proxy_port,
+                    ),
                 ],
                 env=env,
                 cwd=_REPO_ROOT,

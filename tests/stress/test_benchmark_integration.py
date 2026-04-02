@@ -15,10 +15,12 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import httpx
 import pytest
+import yaml
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -115,19 +117,23 @@ def cluster():
         prefill_args = [f"127.0.0.1:{p}" for p in prefill_ports]
         decode_args = [f"127.0.0.1:{p}" for p in decode_ports]
 
+        _cfg = {
+            "model": MODEL_PATH,
+            "prefill": prefill_args,
+            "decode": decode_args,
+            "port": proxy_port,
+        }
+        _cf = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+        yaml.dump(_cfg, _cf)
+        _cf.close()
         proxy = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
                 "xpyd.proxy",
-                "--model",
-                MODEL_PATH,
-                "--prefill",
-                *prefill_args,
-                "--decode",
-                *decode_args,
-                "--port",
-                str(proxy_port),
+                "proxy",
+                "--config",
+                _cf.name,
             ],
             env=env,
             cwd=_REPO_ROOT,
