@@ -42,10 +42,10 @@ try:
     )
 except ImportError:
     from xpyd.config import ProxyConfig
-    from discovery import NodeDiscovery
-    from health_monitor import HealthMonitor
+    from xpyd.discovery import NodeDiscovery
+    from xpyd.health_monitor import HealthMonitor
     from xpyd.registry import InstanceRegistry
-    from routes import register_routes
+    from xpyd.routes import register_routes
     from xpyd.scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
@@ -273,7 +273,7 @@ class Proxy:
         try:
             from .utils import get_total_token_length as _get_total_token_length
         except ImportError:
-            from utils import get_total_token_length as _get_total_token_length
+            from xpyd.utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 
