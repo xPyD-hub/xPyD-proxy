@@ -279,16 +279,20 @@ case "$MODE" in
         ;;
     advanced|basic|benchmark_decode)
         CONFIG_FILE="/tmp/xpyd_proxy_$$.yaml"
-        _yaml_prefill=$(echo "$PREFILL_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
-        _yaml_decode=$(echo "$DECODE_ARGS" | tr ' ' '\n' | sed 's/^/  - "/' | sed 's/$/"/')
-        cat > "$CONFIG_FILE" <<YAMLEOF
-model: "$MODEL_PATH"
-prefill:
-$_yaml_prefill
-decode:
-$_yaml_decode
-port: $DEFAULT_PROXY_PORT
-YAMLEOF
+        {
+            echo "model: \"$MODEL_PATH\""
+            echo "port: $DEFAULT_PROXY_PORT"
+            if [[ -n "$PREFILL_ARGS" ]]; then
+                echo "prefill:"
+                for _item in $PREFILL_ARGS; do
+                    [[ -n "$_item" ]] && echo "  - \"$_item\""
+                done
+            fi
+            echo "decode:"
+            for _item in $DECODE_ARGS; do
+                [[ -n "$_item" ]] && echo "  - \"$_item\""
+            done
+        } > "$CONFIG_FILE"
         CMD="python3 -m xpyd.proxy proxy --config $CONFIG_FILE"
         ;;
     *)

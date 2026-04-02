@@ -2,12 +2,15 @@
 """Centralized proxy configuration with validation.
 
 Provides ``ProxyConfig`` as the single source of truth for all proxy
-parameters.  Values are resolved in precedence order:
+parameters.  The primary loading method is ``ProxyConfig.from_yaml(path)``,
+which reads a YAML config file directly.
 
-    CLI args  >  environment variables  >  YAML config  >  defaults
+CLI overrides (``--port``, ``--log-level``) are applied after YAML loading
+in ``main()``.  Environment variables are restricted to secrets only
+(``ADMIN_API_KEY``, ``OPENAI_API_KEY``).
 
-``ProxyConfig.from_args()`` bridges the existing argparse layer and
-optionally merges a YAML config file when ``--config`` is provided.
+``ProxyConfig.from_args()`` is retained for backward compatibility with
+existing test infrastructure but is no longer used in production code paths.
 """
 
 from __future__ import annotations
@@ -473,5 +476,14 @@ class ProxyConfig(BaseModel):
             yaml_data["admin_api_key"] = admin_key
         if openai_key is not None:
             yaml_data["openai_api_key"] = openai_key
+
+        # Reject unknown top-level keys with a clear error message
+        _known_keys = set(cls.model_fields.keys())
+        _unknown = set(yaml_data.keys()) - _known_keys
+        if _unknown:
+            raise ValueError(
+                f"Unknown keys in YAML config: {sorted(_unknown)}. "
+                f"Valid keys: {sorted(_known_keys)}"
+            )
 
         return cls(**yaml_data)

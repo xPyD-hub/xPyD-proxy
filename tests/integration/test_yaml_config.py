@@ -115,8 +115,7 @@ class TestTopologyYaml:
               world_size_per_node: 8
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.prefill == ["10.0.0.1:8100"]
         assert len(cfg.decode) == 16
         assert cfg.decode[0] == "10.0.0.3:8200"
@@ -131,8 +130,7 @@ class TestTopologyYaml:
               - "10.0.0.2:8000"
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.decode == ["10.0.0.1:8000", "10.0.0.2:8000"]
 
     def test_topology_missing_keys(self, tmp_yaml):
@@ -198,8 +196,7 @@ class TestPrecedence:
             port: 9000
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.model == "/yaml/model"
         assert cfg.port == 9000
 
@@ -284,8 +281,7 @@ class TestScheduling:
             scheduling: roundrobin
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.roundrobin is True
 
     def test_loadbalanced_from_yaml(self, tmp_yaml):
@@ -297,8 +293,7 @@ class TestScheduling:
             scheduling: loadbalanced
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.roundrobin is False
 
     def test_cli_roundrobin_overrides_yaml(self, tmp_yaml):
@@ -343,8 +338,7 @@ class TestLogLevel:
             log_level: debug
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.log_level == "debug"
 
     def test_invalid_log_level(self, tmp_yaml):
@@ -385,6 +379,5 @@ class TestMissingModel:
               - "10.0.0.1:8000"
             """
         )
-        args = _make_args(config=str(p))
-        cfg = ProxyConfig.from_args(args)
+        cfg = ProxyConfig.from_yaml(str(p))
         assert cfg.model == "/yaml/model"

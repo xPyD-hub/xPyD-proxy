@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import socket
 import textwrap
 import threading
@@ -55,17 +54,7 @@ def _make_proxy_from_yaml(yaml_content: str, tmp_path: Path) -> Proxy:
     config_file = tmp_path / "test_config.yaml"
     config_file.write_text(textwrap.dedent(yaml_content))
 
-    args = argparse.Namespace(
-        config=str(config_file),
-        model=None,
-        prefill=None,
-        decode=None,
-        port=8000,
-        generator_on_p_node=False,
-        roundrobin=False,
-        log_level="warning",
-    )
-    config = ProxyConfig.from_args(args)
+    config = ProxyConfig.from_yaml(str(config_file))
 
     return Proxy(
         prefill_instances=config.prefill,
