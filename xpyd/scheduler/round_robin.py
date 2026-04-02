@@ -27,11 +27,12 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         **kwargs,
     ) -> Optional[str]:
         if self._registry is not None:
             role = "prefill" if is_prompt else "decode"
-            available = set(self._registry.get_available_instances(role))
+            available = set(self._registry.get_available_instances(role, model=model))
             if not available:
                 return None
             with self.lock:

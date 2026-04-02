@@ -233,8 +233,9 @@ class Proxy:
                  request_len: Optional[int] = None,
                  max_tokens: Optional[int] = None,
                  **kwargs) -> str:
+        model = kwargs.pop("model", "")
         return self.scheduling_policy.schedule(
-            cycler, is_prompt, request_len, max_tokens, **kwargs,
+            cycler, is_prompt, request_len, max_tokens, model=model, **kwargs,
         )
 
     def schedule_completion(self,
@@ -379,6 +380,8 @@ def _create_scheduling_policy(
     config: ProxyConfig,
     scheduling_policy_cls: Optional[type] = None,
     registry: Optional[InstanceRegistry] = None,
+    all_prefill: Optional[list[str]] = None,
+    all_decode: Optional[list[str]] = None,
 ) -> SchedulingPolicy:
     """Instantiate a scheduling policy from config or explicit class.
 
@@ -386,10 +389,13 @@ def _create_scheduling_policy(
     directly.  Otherwise the ``config.scheduling`` string selects the
     policy via :data:`default_registry`.
     """
+    prefill = all_prefill if all_prefill is not None else config.prefill
+    decode = all_decode if all_decode is not None else config.decode
+
     # Legacy explicit-class path (used by existing tests and CLI --roundrobin)
     if scheduling_policy_cls is not None:
         return scheduling_policy_cls(
-            config.prefill, config.decode, registry=registry,
+            prefill, decode, registry=registry,
         )
 
     strategy = config.scheduling
@@ -398,7 +404,7 @@ def _create_scheduling_policy(
     # Strategies that accept the legacy (prefill, decode) constructor
     if strategy == "loadbalanced":
         return LoadBalancedScheduler(
-            config.prefill, config.decode, registry=registry,
+            prefill, decode, registry=registry,
         )
     if strategy == "roundrobin":
         return RoundRobinSchedulingPolicy(registry=registry)
@@ -407,7 +413,7 @@ def _create_scheduling_policy(
     if default_registry.has(strategy):
         policy = default_registry.create(
             strategy,
-            workers=list(config.prefill) + list(config.decode),
+            workers=list(prefill) + list(decode),
             registry=registry,
             **strategy_opts,
         )
@@ -430,8 +436,10 @@ class ProxyServer:
                                                   StreamingResponse]] = None,
     ):
         self.config = config
-        self.verify_model_config(config.prefill, config.model)
-        self.verify_model_config(config.decode, config.model)
+        # Skip model verification for multi-model (instances) config
+        if not config.instances:
+            self.verify_model_config(config.prefill, config.model)
+            self.verify_model_config(config.decode, config.model)
         self.port = config.port
 
         # Create instance registry and register all instances
@@ -445,21 +453,43 @@ class ProxyServer:
         )
         _registered_prefill: set[str] = set()
         _registered_decode: set[str] = set()
-        for addr in config.prefill:
-            if addr not in _registered_prefill:
-                self.registry.add("prefill", addr)
-                _registered_prefill.add(addr)
-        for addr in config.decode:
-            if addr not in _registered_decode:
-                self.registry.add("decode", addr)
-                _registered_decode.add(addr)
+
+        if config.instances:
+            # Multi-model: register from instances list
+            for entry in config.instances:
+                addr = entry.address
+                if entry.role == "prefill" and addr not in _registered_prefill:
+                    self.registry.add("prefill", addr, model=entry.model)
+                    _registered_prefill.add(addr)
+                elif entry.role == "decode" and addr not in _registered_decode:
+                    self.registry.add("decode", addr, model=entry.model)
+                    _registered_decode.add(addr)
+            # Derive prefill/decode lists for scheduler compatibility
+            all_prefill = [e.address for e in config.instances if e.role == "prefill"]
+            all_decode = [e.address for e in config.instances if e.role == "decode"]
+        else:
+            # Legacy single-model: register from prefill/decode lists
+            model_name = config.model
+            for addr in config.prefill:
+                if addr not in _registered_prefill:
+                    self.registry.add("prefill", addr, model=model_name)
+                    _registered_prefill.add(addr)
+            for addr in config.decode:
+                if addr not in _registered_decode:
+                    self.registry.add("decode", addr, model=model_name)
+                    _registered_decode.add(addr)
+            all_prefill = list(config.prefill)
+            all_decode = list(config.decode)
+
+        self._all_prefill = all_prefill
+        self._all_decode = all_decode
         _registered = _registered_prefill | _registered_decode
 
         # Create health monitor if enabled
         self.health_monitor = None
         hc_cfg = config.health_check
         if hc_cfg.enabled:
-            all_instances = config.prefill + config.decode
+            all_instances = all_prefill + all_decode
             self.health_monitor = HealthMonitor(
                 nodes=all_instances,
                 interval_seconds=hc_cfg.interval_seconds,
@@ -474,11 +504,12 @@ class ProxyServer:
                 self.registry.mark_healthy(addr)
 
         self.proxy_instance = Proxy(
-            prefill_instances=config.prefill,
-            decode_instances=config.decode,
+            prefill_instances=all_prefill,
+            decode_instances=all_decode,
             model=config.model,
             scheduling_policy=_create_scheduling_policy(
                 config, scheduling_policy, self.registry,
+                all_prefill=all_prefill, all_decode=all_decode,
             ),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
@@ -504,8 +535,8 @@ class ProxyServer:
 
     def run_server(self):
         discovery = NodeDiscovery(
-            prefill_instances=self.config.prefill,
-            decode_instances=self.config.decode,
+            prefill_instances=self._all_prefill,
+            decode_instances=self._all_decode,
             probe_interval=self.config.probe_interval_seconds,
             wait_timeout=self.config.wait_timeout_seconds,
         )

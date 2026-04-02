@@ -110,6 +110,7 @@ class PowerOfTwoPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         **kwargs,
     ) -> Optional[str]:
         """Schedule using power-of-two-choices.

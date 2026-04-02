@@ -52,14 +52,57 @@ class HealthCheckConfig(BaseModel):
     timeout_seconds: float = 3.0
 
 
+class InstanceEntry(BaseModel):
+    """Per-instance entry for multi-model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    address: str
+    role: str
+    model: str
+
+    @field_validator("role")
+    @classmethod
+    def _valid_role(cls, v: str) -> str:
+        if v not in ("prefill", "decode"):
+            raise ValueError(f"role must be 'prefill' or 'decode', got {v!r}")
+        return v
+
+    @field_validator("address")
+    @classmethod
+    def _valid_address(cls, v: str) -> str:
+        parts = v.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid instance format: {v}")
+        host, port_str = parts
+        if host != "localhost":
+            try:
+                ipaddress.ip_address(host)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid host in instance {v}: {exc}"
+                ) from exc
+        try:
+            port = int(port_str)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid port in instance {v}: {exc}"
+            ) from exc
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Port out of range in instance {v}")
+        return v
+
+
 class ProxyConfig(BaseModel):
     """Validated proxy configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str
+    model: str = ""
     prefill: List[str] = []
-    decode: List[str]
+    decode: List[str] = []
+    instances: Optional[List[InstanceEntry]] = None
+    models: Optional[List[Dict[str, Any]]] = None
     port: int = 8000
     log_level: str = "warning"
     generator_on_p_node: bool = False
@@ -131,10 +174,40 @@ class ProxyConfig(BaseModel):
 
     @model_validator(mode="after")
     def _require_decode(self) -> "ProxyConfig":
+        # Multi-model config: instances or models field provides everything
+        if self.instances or self.models:
+            return self
         if not self.decode:
             raise ValueError(
                 "Please specify at least one decode node."
             )
+        if not self.model:
+            raise ValueError(
+                "Please specify a model name (required in single-model mode)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _expand_models_to_instances(self) -> "ProxyConfig":
+        """Expand the 'models' shorthand into the 'instances' list."""
+        if self.models is not None:
+            if self.instances is not None:
+                raise ValueError(
+                    "Cannot specify both 'models' and 'instances'."
+                )
+            expanded: List[InstanceEntry] = []
+            for entry in self.models:
+                name = entry.get("name", "")
+                for addr in entry.get("prefill", []):
+                    expanded.append(InstanceEntry(
+                        address=addr, role="prefill", model=name,
+                    ))
+                for addr in entry.get("decode", []):
+                    expanded.append(InstanceEntry(
+                        address=addr, role="decode", model=name,
+                    ))
+            self.instances = expanded
+            self.models = None  # consumed
         return self
 
     # ------------------------------------------------------------------

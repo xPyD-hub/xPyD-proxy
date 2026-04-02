@@ -163,6 +163,7 @@ class ConsistentHashPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         *,
         header: Optional[str] = None,
         session_id: Optional[str] = None,

@@ -121,6 +121,7 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
                 raw_request.client.host if raw_request.client else None
             ),
             "prompt": prompt_text,
+            "model": request.get("model", ""),
         }
 
         prefill_instance = server.schedule(

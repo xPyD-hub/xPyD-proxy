@@ -53,18 +53,19 @@ class LoadBalancedScheduler(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         **kwargs,
     ) -> Optional[str]:
         with self.lock:
             if is_prompt:
-                return self._schedule_prefill(request_len, max_tokens)
+                return self._schedule_prefill(request_len, max_tokens, model)
             else:
-                return self._schedule_decode(request_len, max_tokens)
+                return self._schedule_decode(request_len, max_tokens, model)
 
-    def _schedule_prefill(self, request_len, max_tokens):
+    def _schedule_prefill(self, request_len, max_tokens, model=""):
         available = None
         if self._registry is not None:
-            available = set(self._registry.get_available_instances("prefill"))
+            available = set(self._registry.get_available_instances("prefill", model=model))
         candidates = [
             i
             for i, max_len in enumerate(self.prefill_model_len)
@@ -96,10 +97,10 @@ class LoadBalancedScheduler(SchedulingPolicy):
         )
         return self.prefill_instances[min_index]
 
-    def _schedule_decode(self, request_len, max_tokens):
+    def _schedule_decode(self, request_len, max_tokens, model=""):
         available = None
         if self._registry is not None:
-            available = set(self._registry.get_available_instances("decode"))
+            available = set(self._registry.get_available_instances("decode", model=model))
         candidates = [
             i
             for i, max_len in enumerate(self.decode_model_len)

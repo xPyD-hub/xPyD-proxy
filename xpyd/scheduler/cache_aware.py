@@ -218,6 +218,7 @@ class CacheAwarePolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         *,
         prompt: Optional[str] = None,
         **kwargs,
