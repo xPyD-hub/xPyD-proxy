@@ -4,7 +4,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
-from registry import InstanceRegistry
+
+from xpyd.registry import InstanceRegistry
 
 
 def _build_status_app(registry: InstanceRegistry) -> FastAPI:

@@ -2,8 +2,9 @@
 """Tests for the policy registry (Task 10d)."""
 
 import pytest
-from scheduler.policy_registry import PolicyRegistry, default_registry
-from scheduler.scheduler_base import SchedulingPolicy
+
+from xpyd.scheduler.policy_registry import PolicyRegistry, default_registry
+from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 
 class _DummyPolicy(SchedulingPolicy):

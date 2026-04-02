@@ -8,12 +8,12 @@ from typing import Optional
 try:
     from .scheduler_base import SchedulingPolicy
 except ImportError:
-    from scheduler_base import SchedulingPolicy
+    from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger("xpyd.proxy")
 
 try:
-    from ..MicroPDProxyServer import (
+    from ..server import (
         log_info_blue,
         log_info_red,
         log_info_yellow,
@@ -21,7 +21,7 @@ try:
     )
 except ImportError:
     try:
-        from MicroPDProxyServer import (
+        from xpyd.server import (
             log_info_blue,
             log_info_red,
             log_info_yellow,

@@ -6,7 +6,7 @@ This project provides **dummy prefill and decode nodes** for local development
 and debugging of a PD-separated proxy without any GPU or model dependencies.
 
 The dummy nodes expose the minimum compatibility surface required by the
-validated proxy implementation under `core/`, including:
+validated proxy implementation under `xpyd/`, including:
 
 - `/v1/models`
 - `/v1/completions`
@@ -41,7 +41,7 @@ xpyd --config examples/proxy.yaml
 
 # Or use the traditional way
 pip install -r requirements.txt
-python core/MicroPDProxyServer.py --config examples/proxy.yaml
+xpyd --config examples/proxy.yaml
 ```
 
 ## Installation
@@ -92,7 +92,7 @@ Start the proxy:
 ```bash
 xpyd --config proxy.yaml
 # or
-python core/MicroPDProxyServer.py --config proxy.yaml
+xpyd --config proxy.yaml
 ```
 
 The proxy also searches for config in this order:
@@ -133,7 +133,7 @@ decode:
 ### Option 2: CLI Arguments
 
 ```bash
-python core/MicroPDProxyServer.py \
+xpyd \
   --model /path/to/model \
   --prefill 10.0.0.1:8100 10.0.0.2:8100 \
   --decode 10.0.0.3:8200 10.0.0.4:8200 \
@@ -146,7 +146,7 @@ python core/MicroPDProxyServer.py \
 For topology-driven deployments with TP/DP parameters:
 
 ```bash
-bash core/xpyd_start_proxy.sh \
+bash xpyd/xpyd_start_proxy.sh \
   --model /path/to/model \
   --prefill-nodes 2 --prefill-tp-size 8 --prefill-dp-size 2 --prefill-world-size-per-node 8 \
   --decode-nodes 2 --decode-tp-size 1 --decode-dp-size 16 --decode-world-size-per-node 8 \
@@ -190,7 +190,7 @@ docker compose up --build
 # Or run just the proxy against existing GPU nodes
 docker build -t microxpyd .
 docker run -p 8868:8868 microxpyd \
-  python3 core/MicroPDProxyServer.py \
+  xpyd \
   --model tokenizers/DeepSeek-R1 \
   --prefill 10.0.0.1:8100 --decode 10.0.0.3:8200 \
   --port 8868
@@ -228,16 +228,16 @@ python -m vllm bench serve \
 pip install -r requirements.txt
 
 # Run the full test suite
-PYTHONPATH=core:tests python -m pytest tests/ -v
+python -m pytest tests/ -v
 
 # Run specific test groups
-PYTHONPATH=core:tests python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v  # Node tests
-PYTHONPATH=core:tests python -m pytest tests/test_proxy_matrix.py -v                            # Topology matrix
-PYTHONPATH=core:tests python -m pytest tests/test_yaml_integration.py -v                        # YAML config integration
-PYTHONPATH=core:tests python -m pytest tests/test_config.py tests/test_yaml_config.py -v        # Config validation
-PYTHONPATH=core:tests python -m pytest tests/test_topology.py -v                                # Topology expansion
-PYTHONPATH=core:tests python -m pytest tests/test_scheduler.py -v                               # Scheduler unit tests
-PYTHONPATH=core:tests python -m pytest tests/test_metrics.py -v                                 # Prometheus metrics
+python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v  # Node tests
+python -m pytest tests/test_proxy_matrix.py -v                            # Topology matrix
+python -m pytest tests/test_yaml_integration.py -v                        # YAML config integration
+python -m pytest tests/test_config.py tests/test_yaml_config.py -v        # Config validation
+python -m pytest tests/test_topology.py -v                                # Topology expansion
+python -m pytest tests/test_scheduler.py -v                               # Scheduler unit tests
+python -m pytest tests/test_metrics.py -v                                 # Prometheus metrics
 ```
 
 ## Documentation

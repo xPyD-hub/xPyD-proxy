@@ -7,14 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.scheduler import (
+from xpyd.scheduler import (
     CacheAwarePolicy,
     ConsistentHashPolicy,
     PowerOfTwoPolicy,
     RoundRobinSchedulingPolicy,
     default_registry,
 )
-from core.scheduler.cache_aware import CacheAwarePolicy as CacheAwareDirect
+from xpyd.scheduler.cache_aware import CacheAwarePolicy as CacheAwareDirect
 
 # ------------------------------------------------------------------ #
 # Cache-aware policy unit tests
@@ -158,7 +158,7 @@ class TestSessionIdExtraction:
 
     @staticmethod
     def _extract_session_id(raw_request, body):
-        """Replicate the extraction logic from MicroPDProxyServer."""
+        """Replicate the extraction logic from xpyd.server."""
         return (
             raw_request.headers.get("x-session-id")
             or body.get("user")
@@ -223,7 +223,7 @@ class TestYamlConfigPolicySelection:
 
     def test_default_is_loadbalanced(self):
         """Without explicit scheduling key, default is loadbalanced."""
-        from core.config import ProxyConfig
+        from xpyd.config import ProxyConfig
 
         config = ProxyConfig(
             model="/tmp/model",
@@ -232,7 +232,7 @@ class TestYamlConfigPolicySelection:
         assert config.scheduling == "loadbalanced"
 
     def test_scheduling_field_stored(self):
-        from core.config import ProxyConfig
+        from xpyd.config import ProxyConfig
 
         config = ProxyConfig(
             model="/tmp/model",
@@ -334,7 +334,7 @@ class TestConsistentHashSelectFrom:
 
     def test_schedule_role_filtered(self):
         """schedule(is_prompt=True/False) routes to different role pools."""
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         reg = InstanceRegistry()
         for p in ["p1", "p2"]:
@@ -381,7 +381,7 @@ class TestCacheAwareSelectFrom:
 
     def test_schedule_role_filtered(self):
         """schedule(is_prompt=True/False) routes to different role pools."""
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         reg = InstanceRegistry()
         for p in ["p1", "p2"]:

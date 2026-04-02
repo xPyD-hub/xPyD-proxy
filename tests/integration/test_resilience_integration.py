@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from config import ProxyConfig
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
-from MicroPDProxyServer import Proxy, RoundRobinSchedulingPolicy
 
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
+from xpyd.config import ProxyConfig
+from xpyd.server import Proxy, RoundRobinSchedulingPolicy
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
@@ -152,7 +152,7 @@ async def test_baseline_chat_completion(baseline_client):
 
 class TestRegistry:
     def test_registry_registers_all_instances(self, dummy_nodes):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         registry = InstanceRegistry()
         registry.add("prefill", f"127.0.0.1:{dummy_nodes['prefill_port']}")
@@ -170,7 +170,7 @@ class TestRegistry:
         assert len(decode) == 2
 
     def test_registry_mark_unhealthy_removes_from_available(self, dummy_nodes):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         registry = InstanceRegistry()
         registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
@@ -183,7 +183,7 @@ class TestRegistry:
         assert f"127.0.0.1:{dummy_nodes['decode_port_2']}" in available
 
     def test_registry_mark_healthy_restores(self, dummy_nodes):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         registry = InstanceRegistry()
         registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")
@@ -200,7 +200,7 @@ class TestRegistry:
 
 class TestCircuitBreakerIntegration:
     def test_circuit_opens_after_failures(self):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         registry = InstanceRegistry(
             cb_enabled=True, failure_threshold=2, timeout_duration_seconds=30
@@ -219,7 +219,7 @@ class TestCircuitBreakerIntegration:
         assert "10.0.0.2:8200" in available
 
     def test_circuit_closes_after_recovery(self):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         t = [0.0]
         registry = InstanceRegistry(
@@ -251,7 +251,7 @@ class TestCircuitBreakerIntegration:
 
 @pytest.mark.anyio
 async def test_health_monitor_detects_healthy(dummy_nodes):
-    from health_monitor import HealthMonitor
+    from xpyd.health_monitor import HealthMonitor
 
     results = []
     monitor = HealthMonitor(
@@ -272,7 +272,7 @@ async def test_health_monitor_detects_healthy(dummy_nodes):
 
 @pytest.mark.anyio
 async def test_health_monitor_detects_unreachable():
-    from health_monitor import HealthMonitor
+    from xpyd.health_monitor import HealthMonitor
 
     results = []
     monitor = HealthMonitor(
@@ -296,8 +296,8 @@ async def test_health_monitor_detects_unreachable():
 @pytest.mark.anyio
 async def test_health_monitor_updates_registry(dummy_nodes):
     """Health monitor callbacks should update registry status."""
-    from health_monitor import HealthMonitor
-    from registry import InstanceRegistry
+    from xpyd.health_monitor import HealthMonitor
+    from xpyd.registry import InstanceRegistry
 
     registry = InstanceRegistry()
     registry.add("decode", f"127.0.0.1:{dummy_nodes['decode_port_1']}")

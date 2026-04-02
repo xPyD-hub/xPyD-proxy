@@ -41,12 +41,12 @@ try:
         default_registry,
     )
 except ImportError:
-    from config import ProxyConfig
+    from xpyd.config import ProxyConfig
     from discovery import NodeDiscovery
     from health_monitor import HealthMonitor
-    from registry import InstanceRegistry
+    from xpyd.registry import InstanceRegistry
     from routes import register_routes
-    from scheduler import (
+    from xpyd.scheduler import (
         LoadBalancedScheduler,
         RoundRobinSchedulingPolicy,
         SchedulingPolicy,

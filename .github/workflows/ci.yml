@@ -24,11 +24,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e ".[dev]"
 
       - name: Run tests
         run: |
-          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
+          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/dummy_nodes" \
             python -m pytest tests/unit/ tests/integration/ -v --tb=short
 
   lint:
@@ -44,14 +44,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e ".[dev]"
           pip install ruff isort
 
       - name: Check formatting with ruff
         run: ruff check .
 
-      - name: Check import sorting (excluding core/)
-        run: isort --check-only --diff --skip core .
+      - name: Check import sorting (excluding xpyd/)
+        run: isort --check-only --diff --skip xpyd .
 
   build:
     runs-on: ubuntu-latest
@@ -80,7 +80,7 @@ jobs:
       - name: Run tests (installed mode)
         run: |
           pip install pytest pytest-asyncio aiohttp requests
-          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
+          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/dummy_nodes" \
             python -m pytest tests/integration/test_cli_and_discovery.py -v --tb=short
 
   benchmark:
@@ -96,9 +96,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e ".[dev]"
 
       - name: Run benchmark tests
         run: |
-          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/core:${GITHUB_WORKSPACE}/dummy_nodes" \
+          PYTHONPATH="${PYTHONPATH}:${GITHUB_WORKSPACE}/dummy_nodes" \
             python -m pytest tests/stress/ -v --tb=short -m benchmark -s

@@ -10,7 +10,7 @@ try:
     from .cache_aware import CacheAwarePolicy
     from .policy_registry import PolicyRegistry, default_registry
 except ImportError:
-    from scheduler_base import SchedulingPolicy
+    from xpyd.scheduler.scheduler_base import SchedulingPolicy
     from round_robin import RoundRobinSchedulingPolicy
     from load_balanced import LoadBalancedScheduler
     from consistent_hash import ConsistentHashPolicy

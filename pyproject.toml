@@ -23,10 +23,10 @@ dependencies = [
 ]
 
 [project.scripts]
-xpyd = "core.MicroPDProxyServer:main"
+xpyd = "xpyd.server:main"
 
 [tool.setuptools.packages.find]
-include = ["core*", "dummy_nodes*"]
+include = ["xpyd*", "dummy_nodes*"]
 
 [tool.pytest.ini_options]
 markers = [

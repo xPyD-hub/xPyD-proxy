@@ -3,7 +3,7 @@
 
 from collections import Counter
 
-from core.scheduler.power_of_two import PowerOfTwoPolicy
+from xpyd.scheduler.power_of_two import PowerOfTwoPolicy
 
 
 class TestPowerOfTwoSelect:

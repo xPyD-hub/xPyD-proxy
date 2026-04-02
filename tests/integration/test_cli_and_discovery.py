@@ -12,12 +12,13 @@ from unittest.mock import patch
 
 import pytest
 import uvicorn
-from config import ProxyConfig
-from discovery import DiscoveryTimeout, NodeDiscovery
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from httpx import ASGITransport, AsyncClient
-from MicroPDProxyServer import _build_parser, _resolve_config_path
+
+from xpyd.config import ProxyConfig
+from xpyd.discovery import DiscoveryTimeout, NodeDiscovery
+from xpyd.server import _build_parser, _resolve_config_path
 
 # ------------------------------------------------------------------
 # CLI argument parsing

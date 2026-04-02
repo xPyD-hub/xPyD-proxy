@@ -4,7 +4,7 @@
 import itertools
 from unittest.mock import patch
 
-from scheduler.consistent_hash import ConsistentHashPolicy
+from xpyd.scheduler.consistent_hash import ConsistentHashPolicy
 
 
 class TestConsistentHashPolicy:

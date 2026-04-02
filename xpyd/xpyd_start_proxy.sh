@@ -273,7 +273,7 @@ DECODE_ARGS=$(build_instance_endpoints \
 
 case "$MODE" in
     benchmark)
-        CMD="python3 ./MicroPDProxyServer.py \
+        CMD="python3 -m xpyd.server \
         --model $MODEL_PATH \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \
@@ -283,7 +283,7 @@ case "$MODE" in
         --benchmark_mode"
         ;;
     advanced|basic|benchmark_decode)
-        CMD="python3 ./MicroPDProxyServer.py \
+        CMD="python3 -m xpyd.server \
         --model $MODEL_PATH \
         --prefill $PREFILL_ARGS \
         --decode $DECODE_ARGS \

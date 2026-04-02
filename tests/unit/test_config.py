@@ -7,7 +7,8 @@ import os
 from unittest.mock import patch
 
 import pytest
-from config import ProxyConfig
+
+from xpyd.config import ProxyConfig
 
 
 class TestProxyConfigValidation:

@@ -9,10 +9,11 @@ import time
 
 import pytest
 import uvicorn
-from config import HealthCheckConfig, ProxyConfig
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-from health_monitor import HealthMonitor
+
+from xpyd.config import HealthCheckConfig, ProxyConfig
+from xpyd.health_monitor import HealthMonitor
 
 
 def _free_port():

@@ -3,7 +3,7 @@
 
 import logging
 
-logger = logging.getLogger("MicroPDProxyServer")
+logger = logging.getLogger("xpyd.proxy")
 
 
 def get_total_token_length(tokenizer, prompt):

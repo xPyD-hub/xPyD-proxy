@@ -19,7 +19,7 @@ from typing import Any, Optional
 try:
     from .scheduler_base import SchedulingPolicy
 except ImportError:
-    from scheduler_base import SchedulingPolicy
+    from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 

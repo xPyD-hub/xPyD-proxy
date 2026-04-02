@@ -3,7 +3,7 @@
 # Usage:
 #   xpyd --config examples/proxy.yaml
 #   # or
-#   python core/MicroPDProxyServer.py --config examples/proxy.yaml
+#   xpyd --config examples/proxy.yaml
 #
 # All fields shown with their defaults unless noted otherwise.
 

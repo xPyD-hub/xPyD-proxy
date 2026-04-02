@@ -19,7 +19,7 @@ import pytest
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "core" / "xpyd_start_proxy.sh"
+SCRIPT = REPO_ROOT / "xpyd" / "xpyd_start_proxy.sh"
 PYTHON = sys.executable
 TOKENIZER_DIR = str(REPO_ROOT / "tests" / "assets" / "dummy_tokenizer")
 ENV_BASE = {
@@ -140,7 +140,7 @@ def _launch_proxy_via_script(
     ]
     return subprocess.Popen(
         command,
-        cwd=REPO_ROOT / "core",
+        cwd=REPO_ROOT / "xpyd",
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

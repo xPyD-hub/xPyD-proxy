@@ -1,4 +1,4 @@
-"""Tests for core/xpyd_start_proxy.sh parameterization and validation."""
+"""Tests for xpyd/xpyd_start_proxy.sh parameterization and validation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "core" / "xpyd_start_proxy.sh"
+SCRIPT = REPO_ROOT / "xpyd" / "xpyd_start_proxy.sh"
 
 _MINIMAL_TOPO = [
     "-pn",
@@ -39,7 +39,7 @@ def run_script(*args: str, env_overrides: dict | None = None):
         env.update(env_overrides)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
-        cwd=REPO_ROOT / "core",
+        cwd=REPO_ROOT / "xpyd",
         env=env,
         capture_output=True,
         text=True,

@@ -5,7 +5,7 @@ import os
 import threading
 from unittest.mock import patch
 
-from scheduler.load_balanced import LoadBalancedScheduler
+from xpyd.scheduler.load_balanced import LoadBalancedScheduler
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,7 +14,7 @@ _TOKENIZER_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072, 131072],
 )
 def test_schedule_completion_releases_load(mock_query):
@@ -44,7 +44,7 @@ def test_schedule_completion_releases_load(mock_query):
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[100],
 )
 def test_all_nodes_full_fallback(mock_query):
@@ -59,7 +59,7 @@ def test_all_nodes_full_fallback(mock_query):
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072],
 )
 def test_request_exceeds_model_len(mock_query):
@@ -81,7 +81,7 @@ def test_request_exceeds_model_len(mock_query):
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072, 131072],
 )
 def test_concurrent_scheduling_thread_safety(mock_query):
@@ -131,7 +131,7 @@ def test_concurrent_scheduling_thread_safety(mock_query):
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072, 131072],
 )
 def test_decode_tiebreak_by_kv_utilization(mock_query):

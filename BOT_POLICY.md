@@ -59,7 +59,7 @@ For each non-draft PR with a new commit:
 |---|---|
 | **CI** | CI status does **not** block reviewing — start reviewing immediately. However, CI must be fully green before submitting `APPROVE`. If CI is pending or failed, you may still submit `REQUEST_CHANGES` or `COMMENT`. |
 | **Merge conflicts** | If `mergeable == false`, submit `REQUEST_CHANGES`. |
-| **`core/` changes** | Business logic and API signatures must remain intact. Topology matrix configs `(1,2,1) (2,2,1) (1,2,2) (1,2,4) (1,2,8) (2,2,2) (2,4,1) (2,4,2)` must not be broken. |
+| **`xpyd/` changes** | Business logic and API signatures must remain intact. Topology matrix configs `(1,2,1) (2,2,1) (1,2,2) (1,2,4) (1,2,8) (2,2,2) (2,4,1) (2,4,2)` must not be broken. |
 | **Logic errors** | Incorrect conditions, off-by-one, unhandled edge cases. |
 | **Type safety** | Mismatched parameter/return types, missing `None` checks. |
 | **Concurrency** | Race conditions, missing locks, shared mutable state. |
@@ -129,7 +129,7 @@ Bot-authored PRs use the **hlin99** token (the repo owner account).
 1. **Run pre-commit hooks** — the repo uses pre-commit; run
    `pre-commit run --all-files`.
 2. **Run the full test suite** — `python -m pytest tests/ -v`.
-3. **Run linters** — `ruff check .` and `isort --check-only --skip core .`.
+3. **Run linters** — `ruff check .` and `isort --check-only --skip xpyd .`.
 4. All three must pass locally before pushing.
 
 ### Commit Messages
@@ -162,7 +162,7 @@ Rules:
 
 - Clearly state **what** changed and **why**.
 - Reference related issues (e.g. `closes #12`).
-- If modifying `core/`, explicitly call it out and explain the necessity.
+- If modifying `xpyd/`, explicitly call it out and explain the necessity.
 
 ### Responding to Reviews
 

@@ -7,7 +7,8 @@ import itertools
 from unittest.mock import patch
 
 import pytest
-from scheduler import (
+
+from xpyd.scheduler import (
     LoadBalancedScheduler,
     RoundRobinSchedulingPolicy,
     SchedulingPolicy,
@@ -44,7 +45,7 @@ class TestRoundRobin:
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072, 131072],
 )
 class TestLoadBalanced:
@@ -98,7 +99,7 @@ class TestRoundRobinWithRegistry:
     """Verify RoundRobin skips unhealthy instances when registry is provided."""
 
     def _make_registry(self, prefill, decode, healthy_addrs):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         reg = InstanceRegistry()
         for addr in prefill:
@@ -144,14 +145,14 @@ class TestRoundRobinWithRegistry:
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len",
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
     return_value=[131072, 131072, 131072],
 )
 class TestLoadBalancedWithRegistry:
     """Verify LoadBalanced skips unhealthy instances when registry is provided."""
 
     def _make_registry(self, prefill, decode, healthy_addrs):
-        from registry import InstanceRegistry
+        from xpyd.registry import InstanceRegistry
 
         reg = InstanceRegistry()
         for addr in prefill:
