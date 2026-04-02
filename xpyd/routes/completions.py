@@ -146,12 +146,8 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
                 "No available instance",
                 extra={"endpoint": endpoint, "prompt_length": total_length, "model": requested_model},
             )
-            server.exception_handler(
-                prefill_instance=prefill_instance,
-                decode_instance=decode_instance,
-                req_len=total_length,
-            )
-            # If a specific model was requested and is not known, return 404
+            # Check for unknown model first to return a clean 404 without
+            # triggering error-path side effects (logging, metrics, etc.)
             if requested_model and server.registry is not None:
                 known_models = server.registry.get_registered_models()
                 if requested_model not in known_models:
@@ -160,6 +156,11 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
                         INVALID_REQUEST,
                         404,
                     )
+            server.exception_handler(
+                prefill_instance=prefill_instance,
+                decode_instance=decode_instance,
+                req_len=total_length,
+            )
             return error_response("No available instance can handle the request", PROXY_ERROR, 503)
 
         value = b""

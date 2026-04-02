@@ -539,6 +539,7 @@ class ProxyServer:
             decode_instances=self._all_decode,
             probe_interval=self.config.probe_interval_seconds,
             wait_timeout=self.config.wait_timeout_seconds,
+            registry=self.registry,
         )
 
         app = FastAPI()
