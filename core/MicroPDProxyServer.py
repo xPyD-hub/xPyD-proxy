@@ -58,7 +58,10 @@ formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 
-logger = logging.getLogger(__name__)
+# Use a fixed logger name so all modules (scheduler, routes, etc.) can
+# reference the same configured logger regardless of import path.
+_LOGGER_NAME = "xpyd.proxy"
+logger = logging.getLogger(_LOGGER_NAME)
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 logger.propagate = False

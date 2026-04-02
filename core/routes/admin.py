@@ -9,7 +9,7 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("MicroPDProxyServer")
+logger = logging.getLogger("xpyd.proxy")
 
 
 def register(router: APIRouter, server) -> None:

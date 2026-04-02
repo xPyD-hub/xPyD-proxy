@@ -15,7 +15,7 @@ try:
 except ImportError:
     from metrics import track_request_end, track_request_start
 
-logger = logging.getLogger("MicroPDProxyServer")
+logger = logging.getLogger("xpyd.proxy")
 
 # -- Colour helpers --
 try:

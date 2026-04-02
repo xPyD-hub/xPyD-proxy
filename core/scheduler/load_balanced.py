@@ -10,7 +10,7 @@ try:
 except ImportError:
     from scheduler_base import SchedulingPolicy
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("xpyd.proxy")
 
 try:
     from ..MicroPDProxyServer import (
@@ -38,10 +38,14 @@ except ImportError:
         if not logger.handlers:
             _handler = logging.StreamHandler()
             _handler.setFormatter(
-                logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
+                logging.Formatter(
+                    "[%(asctime)s] %(levelname)s - %(message)s",
+                    "%Y-%m-%d %H:%M:%S",
+                )
             )
             logger.addHandler(_handler)
             logger.setLevel(logging.INFO)
+            logger.propagate = False
 
         def log_info_blue(msg, *a):
             logger.info(f"{_esc.get('blue', '')}{msg}{_esc.get('reset', '')}", *a)
