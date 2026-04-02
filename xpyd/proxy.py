@@ -583,74 +583,52 @@ _VERSION = "0.1.0"
 
 
 def _build_parser():
-    """Build the argument parser for the proxy CLI."""
+    """Build the subcommand argument parser for the proxy CLI."""
     parser = argparse.ArgumentParser(
         prog="xpyd",
-        description="MicroPDProxy — lightweight PD proxy server",
+        description="xPyD — lightweight PD proxy server",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {_VERSION}")
-    parser.add_argument("--config",
-                        "-c",
-                        type=str,
-                        default=None,
-                        help="Path to YAML configuration file")
-    parser.add_argument("--validate-config",
-                        type=str,
-                        default=None,
-                        metavar="FILE",
-                        help="Validate YAML config and exit (no server start)")
-    parser.add_argument("--model",
-                        "-m",
-                        type=str,
-                        default=None,
-                        help="Model name")
-
     parser.add_argument(
-        "--prefill",
-        "-p",
-        type=str,
-        nargs="+",
-        help="List of prefill node URLs (host:port)",
+        "--version", "-V", action="version", version=f"%(prog)s {_VERSION}",
     )
 
-    parser.add_argument(
-        "--decode",
-        "-d",
-        type=str,
-        nargs="+",
-        help="List of decode node URLs (host:port)",
+    subparsers = parser.add_subparsers(dest="command")
+
+    proxy_parser = subparsers.add_parser(
+        "proxy", help="Start the proxy server",
+    )
+    proxy_parser.add_argument(
+        "--config", "-c", type=str, default=None,
+        help="Path to YAML configuration file",
+    )
+    proxy_parser.add_argument(
+        "--validate-config", type=str, default=None, metavar="FILE",
+        help="Validate YAML config and exit (no server start)",
+    )
+    proxy_parser.add_argument(
+        "--init-config", nargs="?", const="./xpyd.yaml", default=None,
+        metavar="PATH",
+        help="Generate a default xpyd.yaml template and exit "
+             "(default: ./xpyd.yaml)",
+    )
+    proxy_parser.add_argument(
+        "--port", type=int, default=None,
+        help="Override the port from config",
+    )
+    proxy_parser.add_argument(
+        "--log-level", type=str, default=None, dest="log_level",
+        help="Override log level: debug|info|warning|error",
     )
 
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Server port number",
-    )
-
-    parser.add_argument(
-        "--generator_on_p_node",
-        action="store_true",
-        help="generate first token on P node or D node",
-    )
-
-    parser.add_argument(
-        "--roundrobin",
-        action="store_true",
-        help="Use Round Robin scheduling for load balancing",
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="warning",
-        dest="log_level",
-        help="Log level: debug, info, warning, error (default: warning)",
-    )
     return parser
 
 
 def _resolve_config_path(args):
-    """Resolve the config file path: --config > XPYD_CONFIG env > ./xpyd.yaml."""
+    """Resolve the config file path: --config > XPYD_CONFIG env > ./xpyd.yaml.
+
+    Returns the path string, or raises ``SystemExit`` with a helpful
+    error message when no config can be found.
+    """
     if args.config:
         return args.config
     env_config = os.environ.get("XPYD_CONFIG")
@@ -659,36 +637,58 @@ def _resolve_config_path(args):
     default_path = os.path.join(os.getcwd(), "xpyd.yaml")
     if os.path.exists(default_path):
         return default_path
-    return None
+    print(
+        "Error: No config file found.\n\n"
+        "Create one with:  xpyd proxy --init-config\n"
+        "Or specify one:   xpyd proxy --config /path/to/config.yaml",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def main():
     """Entry point for the ``xpyd`` CLI."""
+    from xpyd.init_config import generate_config_template
+
     parser = _build_parser()
     args = parser.parse_args()
 
-    # --validate-config mode: validate and exit
-    if args.validate_config:
-        args.config = args.validate_config
-        try:
-            config = ProxyConfig.from_args(args)
-            print(f"Config is valid: {args.validate_config}")
-            print(f"  model: {config.model}")
-            print(f"  prefill: {len(config.prefill)} instances")
-            print(f"  decode: {len(config.decode)} instances")
-            print(f"  port: {config.port}")
-            print(f"  log_level: {config.log_level}")
-            sys.exit(0)
-        except Exception as exc:
-            print(f"Config validation failed: {exc}", file=sys.stderr)
-            sys.exit(1)
+    if args.command == "proxy":
+        # --init-config: generate template and exit
+        if args.init_config is not None:
+            generate_config_template(args.init_config)
+            return
 
-    # Resolve config path with precedence
-    args.config = _resolve_config_path(args)
+        # --validate-config: validate and exit
+        if args.validate_config:
+            config_path = args.validate_config
+            try:
+                config = ProxyConfig.from_yaml(config_path)
+                print(f"Config is valid: {config_path}")
+                print(f"  model: {config.model}")
+                print(f"  prefill: {len(config.prefill)} instances")
+                print(f"  decode: {len(config.decode)} instances")
+                print(f"  port: {config.port}")
+                print(f"  log_level: {config.log_level}")
+                sys.exit(0)
+            except Exception as exc:
+                print(f"Config validation failed: {exc}", file=sys.stderr)
+                sys.exit(1)
 
-    config = ProxyConfig.from_args(args)
-    proxy_server = ProxyServer(config=config)
-    proxy_server.run_server()
+        # Resolve config path with precedence
+        config_path = _resolve_config_path(args)
+        config = ProxyConfig.from_yaml(config_path)
+
+        # Apply CLI overrides
+        if args.port is not None:
+            config = config.model_copy(update={"port": args.port})
+        if args.log_level is not None:
+            config = config.model_copy(update={"log_level": args.log_level})
+
+        proxy_server = ProxyServer(config=config)
+        proxy_server.run_server()
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

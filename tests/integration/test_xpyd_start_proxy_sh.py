@@ -53,6 +53,21 @@ def extract_running_line(stdout: str) -> str:
     raise AssertionError(f"Running line not found in stdout:\n{stdout}")
 
 
+def extract_config_from_cmd(stdout: str) -> dict:
+    """Extract the YAML config file path from the Running line and read it."""
+    import re
+
+    import yaml
+
+    cmd = extract_running_line(stdout)
+    match = re.search(r"--config\s+(\S+)", cmd)
+    if not match:
+        raise AssertionError(f"No --config found in command: {cmd}")
+    config_path = match.group(1)
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
 def test_valid_topology_simple_same_node_instances():
     result = run_script(
         "-pn",

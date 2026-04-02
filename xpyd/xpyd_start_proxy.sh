@@ -273,21 +273,25 @@ DECODE_ARGS=$(build_instance_endpoints \
 
 case "$MODE" in
     benchmark)
-        CMD="python3 -m xpyd.proxy \
-        --model $MODEL_PATH \
-        --prefill $PREFILL_ARGS \
-        --decode $DECODE_ARGS \
-        --port $DEFAULT_PROXY_PORT \
-        --repeat_p_request 1 \
-        --repeat_d_times 639 \
-        --benchmark_mode"
+        # Generate YAML config
+        CONFIG_FILE="/tmp/xpyd_proxy_$$.yaml"
+        cat > "$CONFIG_FILE" <<YAMLEOF
+model: "$MODEL_PATH"
+prefill: [$PREFILL_ARGS]
+decode: [$DECODE_ARGS]
+port: $DEFAULT_PROXY_PORT
+YAMLEOF
+        CMD="python3 -m xpyd.proxy proxy --config $CONFIG_FILE"
         ;;
     advanced|basic|benchmark_decode)
-        CMD="python3 -m xpyd.proxy \
-        --model $MODEL_PATH \
-        --prefill $PREFILL_ARGS \
-        --decode $DECODE_ARGS \
-        --port $DEFAULT_PROXY_PORT"
+        CONFIG_FILE="/tmp/xpyd_proxy_$$.yaml"
+        cat > "$CONFIG_FILE" <<YAMLEOF
+model: "$MODEL_PATH"
+prefill: [$PREFILL_ARGS]
+decode: [$DECODE_ARGS]
+port: $DEFAULT_PROXY_PORT
+YAMLEOF
+        CMD="python3 -m xpyd.proxy proxy --config $CONFIG_FILE"
         ;;
     *)
         error "Unsupported mode: $MODE"

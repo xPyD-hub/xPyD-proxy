@@ -368,3 +368,110 @@ class ProxyConfig(BaseModel):
             merged["retry"] = ResilienceConfig(**retry_raw)
 
         return cls(**merged)
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "ProxyConfig":
+        """Build config from YAML file only."""
+        yaml_data = cls.load_yaml(path)
+
+        # Expand topology-style prefill/decode configs into flat lists
+        for role in ("prefill", "decode"):
+            if role in yaml_data:
+                yaml_data[role] = cls._expand_node_config(role, yaml_data[role])
+
+        # Flatten nested 'startup' section into top-level keys
+        startup = yaml_data.pop("startup", None)
+        if startup is not None and not isinstance(startup, dict):
+            raise ValueError(
+                f"'startup' section must be a mapping, got {type(startup).__name__}"
+            )
+        if isinstance(startup, dict):
+            for key in ("wait_timeout_seconds", "probe_interval_seconds"):
+                if key in startup:
+                    yaml_data[key] = startup[key]
+            unknown_startup = set(startup.keys()) - {
+                "wait_timeout_seconds",
+                "probe_interval_seconds",
+            }
+            if unknown_startup:
+                raise ValueError(
+                    f"Unknown keys in startup config: {sorted(unknown_startup)}"
+                )
+
+        # Handle nested 'health_check' section
+        health_check_raw = yaml_data.pop("health_check", None)
+        if health_check_raw is not None:
+            if not isinstance(health_check_raw, dict):
+                raise ValueError(
+                    f"'health_check' must be a mapping, "
+                    f"got {type(health_check_raw).__name__}"
+                )
+            yaml_data["health_check"] = HealthCheckConfig(**health_check_raw)
+
+        # Handle nested 'retry' section
+        retry_raw = yaml_data.pop("retry", None)
+        if retry_raw is not None:
+            if not isinstance(retry_raw, dict):
+                raise ValueError(
+                    f"'retry' must be a mapping, "
+                    f"got {type(retry_raw).__name__}"
+                )
+            yaml_data["retry"] = ResilienceConfig(**retry_raw)
+
+        # Handle nested 'circuit_breaker' section
+        circuit_breaker_raw = yaml_data.pop("circuit_breaker", None)
+        if circuit_breaker_raw is not None:
+            if not isinstance(circuit_breaker_raw, dict):
+                raise ValueError(
+                    f"'circuit_breaker' must be a mapping, "
+                    f"got {type(circuit_breaker_raw).__name__}"
+                )
+            yaml_data["circuit_breaker"] = CircuitBreakerConfig(
+                **circuit_breaker_raw
+            )
+
+        # Handle scheduling and strategy-specific config sections
+        _VALID_SCHEDULING = {
+            "roundrobin", "loadbalanced",
+            "consistent_hash", "power_of_two", "cache_aware",
+        }
+        scheduling = yaml_data.pop("scheduling", None)
+        _STRATEGY_NAMES = {
+            "consistent_hash", "power_of_two", "cache_aware",
+        }
+        scheduling_config: Dict[str, Any] = {}
+        for strategy_name in _STRATEGY_NAMES:
+            strategy_section = yaml_data.pop(strategy_name, None)
+            if strategy_section is not None:
+                if not isinstance(strategy_section, dict):
+                    raise ValueError(
+                        f"'{strategy_name}' must be a mapping, "
+                        f"got {type(strategy_section).__name__}"
+                    )
+                scheduling_config[strategy_name] = strategy_section
+
+        if scheduling is not None:
+            if scheduling not in _VALID_SCHEDULING:
+                raise ValueError(
+                    f"Invalid scheduling value {scheduling!r}; "
+                    f"expected one of {sorted(_VALID_SCHEDULING)}"
+                )
+            yaml_data["scheduling"] = scheduling
+            yaml_data["roundrobin"] = scheduling == "roundrobin"
+
+        if scheduling_config:
+            yaml_data["scheduling_config"] = scheduling_config
+
+        # Environment variables override YAML for api keys
+        admin_api_key_yaml = yaml_data.pop("admin_api_key", None)
+        openai_api_key_yaml = yaml_data.pop("openai_api_key", None)
+        admin_env = os.environ.get("ADMIN_API_KEY")
+        admin_key = admin_env if admin_env is not None else admin_api_key_yaml
+        openai_env = os.environ.get("OPENAI_API_KEY")
+        openai_key = openai_env if openai_env is not None else openai_api_key_yaml
+        if admin_key is not None:
+            yaml_data["admin_api_key"] = admin_key
+        if openai_key is not None:
+            yaml_data["openai_api_key"] = openai_key
+
+        return cls(**yaml_data)

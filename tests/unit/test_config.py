@@ -136,3 +136,61 @@ class TestProxyConfigFromArgs:
         args = self._make_args(prefill=None)
         cfg = ProxyConfig.from_args(args)
         assert cfg.prefill == []
+
+
+class TestProxyConfigFromYaml:
+    """from_yaml() classmethod."""
+
+    def test_from_yaml_minimal(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text("model: my-model\ndecode:\n  - '10.0.0.1:8000'\n")
+        cfg = ProxyConfig.from_yaml(str(p))
+        assert cfg.model == "my-model"
+        assert cfg.decode == ["10.0.0.1:8000"]
+        assert cfg.port == 8000
+
+    def test_from_yaml_full(self, tmp_path):
+        import textwrap
+
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            textwrap.dedent(
+                """\
+            model: /path/model
+            prefill:
+              - "10.0.0.1:8001"
+            decode:
+              - "10.0.0.2:8002"
+            port: 9000
+            log_level: debug
+            scheduling: roundrobin
+            startup:
+              wait_timeout_seconds: 120
+              probe_interval_seconds: 5
+            health_check:
+              enabled: true
+              interval_seconds: 5.0
+              timeout_seconds: 2.0
+        """
+            )
+        )
+        cfg = ProxyConfig.from_yaml(str(p))
+        assert cfg.port == 9000
+        assert cfg.log_level == "debug"
+        assert cfg.roundrobin is True
+        assert cfg.scheduling == "roundrobin"
+        assert cfg.wait_timeout_seconds == 120
+        assert cfg.health_check.enabled is True
+
+    def test_from_yaml_env_override(self, tmp_path):
+        p = tmp_path / "cfg.yaml"
+        p.write_text(
+            "model: m\ndecode:\n  - '10.0.0.1:8000'\nadmin_api_key: yaml-key\n"
+        )
+        with patch.dict(os.environ, {"ADMIN_API_KEY": "env-key"}):
+            cfg = ProxyConfig.from_yaml(str(p))
+        assert cfg.admin_api_key == "env-key"
+
+    def test_from_yaml_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            ProxyConfig.from_yaml("/nonexistent/path.yaml")

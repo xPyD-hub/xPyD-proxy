@@ -97,18 +97,33 @@ def _spawn_node(module: str, port: int) -> subprocess.Popen:
 def _spawn_proxy(
     prefill_instances: list[str], decode_instances: list[str], port: int
 ) -> subprocess.Popen:
+    # Generate a temporary YAML config for the proxy
+    import tempfile
+
+    import yaml
+
+    config = {
+        "model": TOKENIZER_DIR,
+        "port": port,
+        "decode": decode_instances,
+    }
+    if prefill_instances:
+        config["prefill"] = prefill_instances
+
+    config_file = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, dir=str(REPO_ROOT)
+    )
+    yaml.dump(config, config_file)
+    config_file.close()
+
     command = [
         PYTHON,
         "-m",
         "xpyd.proxy",
-        "--model",
-        TOKENIZER_DIR,
-        "--port",
-        str(port),
+        "proxy",
+        "--config",
+        config_file.name,
     ]
-    if prefill_instances:
-        command.extend(["--prefill", *prefill_instances])
-    command.extend(["--decode", *decode_instances])
     return subprocess.Popen(
         command,
         cwd=REPO_ROOT,
