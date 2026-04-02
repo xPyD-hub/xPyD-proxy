@@ -1,6 +1,6 @@
 """Integration tests for the proxy/dummy-node matrix from task_openclaw.md.
 
-These tests intentionally exercise the real ``core/MicroPDProxyServer.py``
+These tests intentionally exercise the real ``xpyd/proxy.py``
 server with multiple dummy prefill/decode nodes and the requested proxy
 configurations, without changing the core business logic.
 """
@@ -100,7 +100,7 @@ def _spawn_proxy(
     command = [
         PYTHON,
         "-m",
-        "core.MicroPDProxyServer",
+        "xpyd.proxy",
         "--model",
         TOKENIZER_DIR,
         "--port",

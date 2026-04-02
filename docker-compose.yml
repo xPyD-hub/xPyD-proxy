@@ -38,7 +38,7 @@ services:
   proxy:
     build: .
     command: >
-      python3 core/MicroPDProxyServer.py
+      python3 -m xpyd.proxy
       --model tokenizers/DeepSeek-R1
       --prefill prefill-0:8100 prefill-1:8100
       --decode  decode-0:8200  decode-1:8200

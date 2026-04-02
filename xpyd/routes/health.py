@@ -4,10 +4,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-try:
-    from ..metrics import get_metrics
-except ImportError:
-    from metrics import get_metrics
+from xpyd.metrics import get_metrics
 
 
 def register(router: APIRouter, server) -> None:

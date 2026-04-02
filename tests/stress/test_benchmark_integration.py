@@ -119,7 +119,7 @@ def cluster():
             [
                 sys.executable,
                 "-m",
-                "core.MicroPDProxyServer",
+                "xpyd.proxy",
                 "--model",
                 MODEL_PATH,
                 "--prefill",

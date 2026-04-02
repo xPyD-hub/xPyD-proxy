@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import pytest
-from circuit_breaker import CircuitBreaker, CircuitBreakerState
+
+from xpyd.circuit_breaker import CircuitBreaker, CircuitBreakerState
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -291,7 +292,7 @@ class TestFullCycle:
 
 class TestCircuitBreakerConfig:
     def test_default_config(self):
-        from config import ProxyConfig
+        from xpyd.config import ProxyConfig
 
         cfg = ProxyConfig(model="m", decode=["127.0.0.1:8000"])
         assert cfg.circuit_breaker.enabled is False
@@ -301,15 +302,16 @@ class TestCircuitBreakerConfig:
         assert cfg.circuit_breaker.window_duration_seconds == 60
 
     def test_config_from_dict(self):
-        from config import CircuitBreakerConfig
+        from xpyd.config import CircuitBreakerConfig
 
         cb_cfg = CircuitBreakerConfig(enabled=True, failure_threshold=10)
         assert cb_cfg.enabled is True
         assert cb_cfg.failure_threshold == 10
 
     def test_config_rejects_unknown_fields(self):
-        from config import CircuitBreakerConfig
         from pydantic import ValidationError
+
+        from xpyd.config import CircuitBreakerConfig
 
         with pytest.raises(ValidationError, match="bogus"):
             CircuitBreakerConfig(enabled=True, bogus=42)

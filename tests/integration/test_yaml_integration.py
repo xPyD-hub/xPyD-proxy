@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from config import ProxyConfig
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
-from MicroPDProxyServer import Proxy, RoundRobinSchedulingPolicy
 
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
+from xpyd.config import ProxyConfig
+from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")

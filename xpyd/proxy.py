@@ -28,30 +28,17 @@ from fastapi import (APIRouter, FastAPI, HTTPException,
 from fastapi.responses import JSONResponse, StreamingResponse
 from transformers import AutoTokenizer
 from fastapi.middleware.cors import CORSMiddleware
-try:
-    from .config import ProxyConfig
-    from .discovery import NodeDiscovery
-    from .health_monitor import HealthMonitor
-    from .registry import InstanceRegistry
-    from .routes import register_routes
-    from .scheduler import (
-        LoadBalancedScheduler,
-        RoundRobinSchedulingPolicy,
-        SchedulingPolicy,
-        default_registry,
-    )
-except ImportError:
-    from config import ProxyConfig
-    from discovery import NodeDiscovery
-    from health_monitor import HealthMonitor
-    from registry import InstanceRegistry
-    from routes import register_routes
-    from scheduler import (
-        LoadBalancedScheduler,
-        RoundRobinSchedulingPolicy,
-        SchedulingPolicy,
-        default_registry,
-    )
+from xpyd.config import ProxyConfig
+from xpyd.discovery import NodeDiscovery
+from xpyd.health_monitor import HealthMonitor
+from xpyd.registry import InstanceRegistry
+from xpyd.routes import register_routes
+from xpyd.scheduler import (
+    LoadBalancedScheduler,
+    RoundRobinSchedulingPolicy,
+    SchedulingPolicy,
+    default_registry,
+)
 
 formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
                               "%Y-%m-%d %H:%M:%S")
@@ -269,11 +256,8 @@ class Proxy:
             req_len=req_len)
 
     def get_total_token_length(self, prompt):
-        """Compute total token length — delegates to :func:`utils.get_total_token_length`."""
-        try:
-            from .utils import get_total_token_length as _get_total_token_length
-        except ImportError:
-            from utils import get_total_token_length as _get_total_token_length
+        """Compute total token length — delegates to :func:`xpyd.utils.get_total_token_length`."""
+        from xpyd.utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 

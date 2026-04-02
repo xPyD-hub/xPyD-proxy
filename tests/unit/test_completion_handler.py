@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.responses import JSONResponse
 
-from core.routes.completions import (
+from xpyd.routes.completions import (
     build_kv_prepare_request,
     extract_prompt_info,
     handle_completion,
@@ -192,24 +192,24 @@ class TestGetTotalTokenLength:
         return MagicMock(side_effect=lambda text: {"input_ids": list(range(len(text)))})
 
     def test_none_input(self, tokenizer):
-        from core.utils import get_total_token_length
+        from xpyd.utils import get_total_token_length
 
         assert get_total_token_length(tokenizer, None) == 0
 
     def test_empty_list(self, tokenizer):
-        from core.utils import get_total_token_length
+        from xpyd.utils import get_total_token_length
 
         assert get_total_token_length(tokenizer, []) == 0
 
     def test_flat_int_list(self, tokenizer):
         """Single flat list of ints — already tokenized token IDs."""
-        from core.utils import get_total_token_length
+        from xpyd.utils import get_total_token_length
 
         assert get_total_token_length(tokenizer, [101, 102, 103]) == 3
 
     def test_multimodal_dict_list(self, tokenizer):
         """List of dicts with text parts — multimodal content."""
-        from core.utils import get_total_token_length
+        from xpyd.utils import get_total_token_length
 
         result = get_total_token_length(
             tokenizer,
@@ -248,8 +248,8 @@ class TestHandleCompletion:
         raw_request.json = AsyncMock(side_effect=ValueError("bad json"))
 
         with (
-            patch("core.routes.completions.track_request_start", return_value=0),
-            patch("core.routes.completions.track_request_end"),
+            patch("xpyd.routes.completions.track_request_start", return_value=0),
+            patch("xpyd.routes.completions.track_request_end"),
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -264,8 +264,8 @@ class TestHandleCompletion:
         raw_request.json = AsyncMock(return_value={})
 
         with (
-            patch("core.routes.completions.track_request_start", return_value=0),
-            patch("core.routes.completions.track_request_end"),
+            patch("xpyd.routes.completions.track_request_start", return_value=0),
+            patch("xpyd.routes.completions.track_request_end"),
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -287,10 +287,10 @@ class TestHandleCompletion:
         server.exception_handler = MagicMock()
 
         with (
-            patch("core.routes.completions.track_request_start", return_value=0),
-            patch("core.routes.completions.track_request_end"),
-            patch("core.routes.completions._log_green"),
-            patch("core.routes.completions._log_red"),
+            patch("xpyd.routes.completions.track_request_start", return_value=0),
+            patch("xpyd.routes.completions.track_request_end"),
+            patch("xpyd.routes.completions._log_green"),
+            patch("xpyd.routes.completions._log_red"),
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False

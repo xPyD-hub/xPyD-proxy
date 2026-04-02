@@ -7,7 +7,8 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from resilience import ResilienceConfig, ResilienceHandler, compute_backoff
+
+from xpyd.resilience import ResilienceConfig, ResilienceHandler, compute_backoff
 
 # ---------------------------------------------------------------------------
 # compute_backoff
@@ -309,7 +310,7 @@ retry:
             probe_interval_seconds=10,
         )
 
-        import config as config_mod
+        import xpyd.config as config_mod
 
         proxy_cfg = config_mod.ProxyConfig.from_args(args)
         assert proxy_cfg.retry.enabled is True
@@ -342,7 +343,7 @@ retry:
             probe_interval_seconds=10,
         )
 
-        import config as config_mod
+        import xpyd.config as config_mod
 
         with pytest.raises(Exception, match="bogus_key"):
             config_mod.ProxyConfig.from_args(args)

@@ -6,7 +6,8 @@ import concurrent.futures
 import threading
 
 import pytest
-from registry import CircuitBreakerState, InstanceRegistry, InstanceStatus
+
+from xpyd.registry import CircuitBreakerState, InstanceRegistry, InstanceStatus
 
 # ---------------------------------------------------------------------------
 # Add / Remove

@@ -26,6 +26,9 @@ from pydantic import (
     model_validator,
 )
 
+from xpyd.resilience import ResilienceConfig
+from xpyd.topology import expand_topology
+
 
 class CircuitBreakerConfig(BaseModel):
     """Configuration for the per-instance circuit breaker."""
@@ -37,16 +40,6 @@ class CircuitBreakerConfig(BaseModel):
     success_threshold: int = 2
     timeout_duration_seconds: int = 30
     window_duration_seconds: int = 60
-
-try:
-    from .resilience import ResilienceConfig
-except ImportError:
-    from resilience import ResilienceConfig
-
-try:
-    from .topology import expand_topology
-except ImportError:
-    from topology import expand_topology
 
 
 class HealthCheckConfig(BaseModel):

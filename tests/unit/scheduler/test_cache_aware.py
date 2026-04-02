@@ -4,7 +4,7 @@
 import itertools
 from unittest.mock import MagicMock
 
-from core.scheduler.cache_aware import (
+from xpyd.scheduler.cache_aware import (
     DEFAULT_PREFIX_LENGTH,
     VIRTUAL_NODES_PER_WORKER,
     CacheAwarePolicy,

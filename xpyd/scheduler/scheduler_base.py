@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from core.registry import InstanceRegistry
+    from xpyd.registry import InstanceRegistry
 
 
 class SchedulingPolicy(ABC):

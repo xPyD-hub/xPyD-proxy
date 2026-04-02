@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 8868
 
-CMD ["python3", "core/MicroPDProxyServer.py", "--model", "tokenizers/DeepSeek-R1", "--port", "8868"]
+CMD ["python3", "-m", "xpyd.proxy", "--model", "tokenizers/DeepSeek-R1", "--port", "8868"]

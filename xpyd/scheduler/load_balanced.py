@@ -5,59 +5,47 @@ import itertools
 import logging
 from typing import Optional
 
-try:
-    from .scheduler_base import SchedulingPolicy
-except ImportError:
-    from scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger("xpyd.proxy")
 
 try:
-    from ..MicroPDProxyServer import (
+    from xpyd.proxy import (
         log_info_blue,
         log_info_red,
         log_info_yellow,
         query_instance_model_len,
     )
 except ImportError:
+    # Circular import at init time — define colored fallbacks inline
     try:
-        from MicroPDProxyServer import (
-            log_info_blue,
-            log_info_red,
-            log_info_yellow,
-            query_instance_model_len,
-        )
-    except ImportError:
-        # Fallback when running standalone or circular import
-        try:
-            from colorlog.escape_codes import escape_codes as _esc
-        except ImportError:  # pragma: no cover
-            _esc = {}  # type: ignore[assignment]
+        from colorlog.escape_codes import escape_codes as _esc
+    except ImportError:  # pragma: no cover
+        _esc = {}  # type: ignore[assignment]
 
-        # Ensure fallback logger has a handler so output is visible
-        if not logger.handlers:
-            _handler = logging.StreamHandler()
-            _handler.setFormatter(
-                logging.Formatter(
-                    "[%(asctime)s] %(levelname)s - %(message)s",
-                    "%Y-%m-%d %H:%M:%S",
-                )
+    if not logger.handlers:
+        _handler = logging.StreamHandler()
+        _handler.setFormatter(
+            logging.Formatter(
+                "[%(asctime)s] %(levelname)s - %(message)s",
+                "%Y-%m-%d %H:%M:%S",
             )
-            logger.addHandler(_handler)
-            logger.setLevel(logging.INFO)
-            logger.propagate = False
+        )
+        logger.addHandler(_handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
 
-        def log_info_blue(msg, *a):
-            logger.info(f"{_esc.get('blue', '')}{msg}{_esc.get('reset', '')}", *a)
+    def log_info_blue(msg, *a):
+        logger.info(f"{_esc.get('blue', '')}{msg}{_esc.get('reset', '')}", *a)
 
-        def log_info_red(msg, *a):
-            logger.info(f"{_esc.get('red', '')}{msg}{_esc.get('reset', '')}", *a)
+    def log_info_red(msg, *a):
+        logger.info(f"{_esc.get('red', '')}{msg}{_esc.get('reset', '')}", *a)
 
-        def log_info_yellow(msg, *a):
-            logger.info(f"{_esc.get('yellow', '')}{msg}{_esc.get('reset', '')}", *a)
+    def log_info_yellow(msg, *a):
+        logger.info(f"{_esc.get('yellow', '')}{msg}{_esc.get('reset', '')}", *a)
 
-        def query_instance_model_len(instances, timeout=5.0):
-            return [131072] * len(instances)
+    def query_instance_model_len(instances, timeout=5.0):
+        return [131072] * len(instances)
 
 
 class LoadBalancedScheduler(SchedulingPolicy):

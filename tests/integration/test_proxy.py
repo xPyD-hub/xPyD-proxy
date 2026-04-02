@@ -13,10 +13,10 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
-from MicroPDProxyServer import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 from dummy_nodes.decode_node import app as decode_app
 from dummy_nodes.prefill_node import app as prefill_app
+from xpyd.proxy import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 # ---------------------------------------------------------------------------
 # Use local tokenizer from repo to avoid network dependency in CI
@@ -243,7 +243,8 @@ def test_round_robin_schedule_completion_exists():
 
 
 @patch(
-    "scheduler.load_balanced.query_instance_model_len", return_value=[131072, 131072]
+    "xpyd.scheduler.load_balanced.query_instance_model_len",
+    return_value=[131072, 131072],
 )
 def test_load_balanced_scheduling(mock_query):
     """Test LoadBalancedScheduler distributes requests across instances."""

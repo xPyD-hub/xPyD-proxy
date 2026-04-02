@@ -7,8 +7,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from config import ProxyConfig
-from topology import expand_topology, validate_topology
+
+from xpyd.config import ProxyConfig
+from xpyd.topology import expand_topology, validate_topology
 
 # ------------------------------------------------------------------
 # topology.py unit tests
