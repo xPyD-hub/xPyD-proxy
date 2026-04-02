@@ -64,3 +64,42 @@ def get_total_token_length(tokenizer, prompt):
     else:
         logger.error("Unsupported prompt type: %s", type(prompt))
         return fake_len
+
+
+def query_instance_model_len(instances, timeout=5.0):
+    """Query each instance for its max_model_len.
+
+    Parameters
+    ----------
+    instances : list[str]
+        Instance addresses in ``host:port`` format.
+    timeout : float
+        HTTP request timeout in seconds.
+
+    Returns
+    -------
+    list[int]
+        Max model length for each instance. Falls back to 131072 on failure.
+    """
+    import requests
+
+    _DEFAULT_MODEL_LEN = 131072
+    model_lens = []
+    for inst in instances:
+        try:
+            url = f"http://{inst}/v1/models"
+            resp = requests.get(url, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()["data"][0]
+            max_len = data.get("max_model_len", _DEFAULT_MODEL_LEN)
+            model_lens.append(max_len)
+            logger.info("Instance %s model_len: %d", inst, max_len)
+        except Exception as e:
+            logger.warning(
+                "Failed to get model_len from %s, using default %d: %s",
+                inst,
+                _DEFAULT_MODEL_LEN,
+                e,
+            )
+            model_lens.append(_DEFAULT_MODEL_LEN)
+    return model_lens

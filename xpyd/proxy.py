@@ -17,18 +17,19 @@ import json
 import logging
 import os
 import sys
-from typing import Callable, Optional
+from collections.abc import AsyncGenerator
+from typing import Any, Callable, Optional
 
 import aiohttp
 import requests
 import uvicorn
-from colorlog.escape_codes import escape_codes
 from fastapi import (APIRouter, FastAPI, HTTPException,
                      Request)
 from fastapi.responses import JSONResponse, StreamingResponse
 from transformers import AutoTokenizer
 from fastapi.middleware.cors import CORSMiddleware
 from xpyd.config import ProxyConfig
+from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_response
 from xpyd.discovery import NodeDiscovery
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
@@ -40,8 +41,30 @@ from xpyd.scheduler import (
     default_registry,
 )
 
-formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s",
-                              "%Y-%m-%d %H:%M:%S")
+class _ExtraFormatter(logging.Formatter):
+    """Formatter that appends ``extra`` fields as ``key=value`` pairs."""
+
+    _SKIP = set(logging.LogRecord("", "", "", 0, "", (), None).__dict__) | {
+        "taskName",
+        "message",
+        "asctime",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        extras = {
+            k: v
+            for k, v in record.__dict__.items()
+            if k not in self._SKIP
+        }
+        if extras:
+            base += " | " + " ".join(f"{k}={v}" for k, v in extras.items())
+        return base
+
+
+formatter = _ExtraFormatter(
+    "[%(asctime)s] %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S"
+)
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 
@@ -53,46 +76,11 @@ logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 logger.propagate = False
 
-def log_info_color(color, msg, *args):
-    """Generic colored log with parameterized message."""
-    msg_colored = f"{escape_codes[color]}{msg}{escape_codes['reset']}"
-    logger.info(msg_colored, *args)
-
-def log_info_blue(msg, *args):
-    log_info_color('cyan', msg, *args)
-
-def log_info_green(msg, *args):
-    log_info_color('green', msg, *args)
-
-def log_info_yellow(msg, *args):
-    log_info_color('yellow', msg, *args)
-
-def log_info_red(msg, *args):
-    log_info_color('red', msg, *args)
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=None,
                                         connect=None,
                                         sock_read=None,
                                         sock_connect=None)
-
-def query_instance_model_len(instances, timeout=5.0):
-    """
-    Query each instance for its max_model_len.
-    """
-    model_lens = []
-    for inst in instances:
-        try:
-            url = f"http://{inst}/v1/models"
-            resp = requests.get(url, timeout=timeout)
-            resp.raise_for_status()
-            data = resp.json()["data"][0]
-            max_len = data.get("max_model_len", 0)
-            model_lens.append(max_len)
-            logger.info("Instance %s model_len: %d", inst, max_len)
-        except Exception as e:
-            logger.warning("Failed to get model_len from %s: %s", inst, e)
-            sys.exit(1)
-    return model_lens
 
 async def P_first_token_generator(generator_p,
                                   generator_d,
@@ -185,17 +173,17 @@ class Proxy:
         self.tokenizer = AutoTokenizer.from_pretrained(model)
 
     def on_done(self,
-                prefill_instance: str = None,
-                decode_instance: str = None,
-                req_len: int = None):
+                prefill_instance: Optional[str] = None,
+                decode_instance: Optional[str] = None,
+                req_len: Optional[int] = None) -> None:
         self.schedule_completion(prefill_instance,
                                  decode_instance,
                                  req_len=req_len)
 
-    def setup_routes(self):
+    def setup_routes(self) -> None:
         register_routes(self.router, self)
 
-    async def forward_request(self, url, data, use_chunked=True):
+    async def forward_request(self, url: str, data: dict, use_chunked: bool = True) -> AsyncGenerator[bytes, None]:
         async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
             headers = {
                 "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
@@ -233,8 +221,11 @@ class Proxy:
                     "Bad Gateway: Error communicating with upstream server.",
                 ) from e
             except Exception as e:
-                logger.error("Unexpected error: %s", str(e))
-                raise HTTPException(status_code=500, detail=str(e)) from e
+                logger.exception("Unexpected error in forward_request")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Internal proxy error",
+                ) from e
 
     def schedule(self,
                  cycler: itertools.cycle,
@@ -255,13 +246,13 @@ class Proxy:
             decode_instance=decode_instance,
             req_len=req_len)
 
-    def get_total_token_length(self, prompt):
+    def get_total_token_length(self, prompt: Any) -> int:
         """Compute total token length — delegates to :func:`xpyd.utils.get_total_token_length`."""
         from xpyd.utils import get_total_token_length as _get_total_token_length
 
         return _get_total_token_length(self.tokenizer, prompt)
 
-    def exception_handler(self, prefill_instance=None, decode_instance=None, req_len=None):
+    def exception_handler(self, prefill_instance: Optional[str] = None, decode_instance: Optional[str] = None, req_len: Optional[int] = None) -> None:
         if prefill_instance or decode_instance:
             try:
                 self.on_done(
@@ -279,7 +270,7 @@ class Proxy:
                 logger.error(f"Error releasing instances: {e}")
                 raise
 
-    def _record_failure(self, prefill_instance=None, decode_instance=None):
+    def _record_failure(self, prefill_instance: Optional[str] = None, decode_instance: Optional[str] = None) -> None:
         """Record request failure with registry for circuit breaker tracking."""
         if self.registry is not None:
             if prefill_instance:
@@ -287,10 +278,10 @@ class Proxy:
             if decode_instance:
                 self.registry.record_failure(decode_instance)
 
-    async def get_from_instance(self, path: str, is_full_instancelist: int = 0):
+    async def get_from_instance(self, path: str, is_full_instancelist: int = 0) -> JSONResponse:
         """Fetch data from backend instance(s) via GET."""
         if not self.prefill_instances:
-            return JSONResponse(content={"error": "No instances available"}, status_code=500)
+            return error_response("No instances available", SERVER_ERROR, 500)
 
         if is_full_instancelist == 0:
             instances = [self.prefill_instances[0]]
@@ -315,20 +306,23 @@ class Proxy:
                             "data": data,
                         }
                 except Exception as e:
-                    results[inst] = {"status": 500, "error": str(e)}
+                    results[inst] = {"status": 500, "error": "Failed to connect to instance"}
                     logger.warning("Failed to fetch %s from %s: %s", path, inst, e)
 
         return JSONResponse(content=results, status_code=200)
 
-    async def post_to_instance(self, request: Request, path: str, json_template: dict):
+    async def post_to_instance(self, request: Request, path: str, json_template: dict) -> JSONResponse:
         """Forward a POST request to a backend instance."""
-        body = await request.json()
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return error_response("Invalid JSON in request body", INVALID_REQUEST, 400)
 
         missing = [k for k in json_template.keys() if k not in body]
         if missing:
-            return JSONResponse(
-                {"error": f"Missing required fields: {', '.join(missing)}"},
-                status_code=400,
+            return error_response(
+                f"Missing required fields: {', '.join(missing)}",
+                INVALID_REQUEST, 400,
             )
 
         payload = json_template.copy()
@@ -343,11 +337,9 @@ class Proxy:
                 except aiohttp.ContentTypeError:
                     content = {"raw": await resp.text()}
                 return JSONResponse(content, status_code=resp.status)
-        except Exception as e:
-            return JSONResponse(
-                {"error": f"Failed to fetch {url}, reason: {str(e)}"},
-                status_code=500,
-            )
+        except Exception:
+            logger.exception("Failed to forward request to %s", url)
+            return error_response(f"Failed to forward request to {url}", SERVER_ERROR, 500)
 
     async def validate_instance(self, instance: str) -> bool:
         """Validate that an instance is reachable and serves the correct model."""
@@ -534,10 +526,7 @@ class ProxyServer:
             if path in ("/health", "/ping", "/status", "/metrics"):
                 return await call_next(request)
             if not discovery.is_ready:
-                return JSONResponse(
-                    {"error": "waiting for backend nodes"},
-                    status_code=503,
-                )
+                return error_response("Waiting for backend nodes", PROXY_ERROR, 503)
             return await call_next(request)
 
         @app.on_event("startup")

@@ -10,23 +10,10 @@ from asyncio import CancelledError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
 from xpyd.metrics import track_request_end, track_request_start
 
 logger = logging.getLogger("xpyd.proxy")
-
-# -- Colour helpers --
-try:
-    from colorlog.escape_codes import escape_codes as _esc
-except ImportError:  # pragma: no cover
-    _esc = {}  # type: ignore[assignment]
-
-
-def _log_green(msg, *a):
-    logger.info(f"{_esc.get('green','')}{msg}{_esc.get('reset','')}", *a)
-
-
-def _log_red(msg, *a):
-    logger.info(f"{_esc.get('red','')}{msg}{_esc.get('reset','')}", *a)
 
 
 # ---------------------------------------------------------------------------
@@ -38,21 +25,12 @@ def validate_completion_request(request, is_chat):
     """Validate required fields. Returns JSONResponse on error, None on success."""
     if is_chat:
         if "messages" not in request:
-            return JSONResponse(
-                {"error": {"message": "Missing required field: messages", "type": "invalid_request_error"}},
-                status_code=400,
-            )
+            return error_response("Missing required field: messages", INVALID_REQUEST, 400)
         if not isinstance(request["messages"], list):
-            return JSONResponse(
-                {"error": {"message": "Field messages must be a list", "type": "invalid_request_error"}},
-                status_code=400,
-            )
+            return error_response("Field messages must be a list", INVALID_REQUEST, 400)
     else:
         if "prompt" not in request:
-            return JSONResponse(
-                {"error": {"message": "Missing required field: prompt", "type": "invalid_request_error"}},
-                status_code=400,
-            )
+            return error_response("Missing required field: prompt", INVALID_REQUEST, 400)
     return None
 
 
@@ -103,10 +81,7 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
         try:
             request = await raw_request.json()
         except (json.JSONDecodeError, ValueError):
-            return JSONResponse(
-                {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
-                status_code=400,
-            )
+            return error_response("Invalid JSON in request body", INVALID_REQUEST, 400)
 
         error_resp = validate_completion_request(request, is_chat)
         if error_resp:
@@ -122,10 +97,15 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
             request, is_chat, server
         )
         end_time = time.time()
-        _log_green(
-            f"{handler_name} -- prompt length: {total_length}, "
-            f"max tokens: {max_tokens}, "
-            f"tokenizer took {(end_time - start_time) * 1000:.2f} ms"
+        elapsed_ms = (end_time - start_time) * 1000
+        logger.info(
+            "Completion request received",
+            extra={
+                "endpoint": endpoint,
+                "prompt_length": total_length,
+                "max_tokens": max_tokens,
+                "tokenizer_ms": round(elapsed_ms, 2),
+            },
         )
 
         _session_id = (
@@ -160,16 +140,16 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
         )
 
         if prefill_instance is None or decode_instance is None:
-            _log_red("No available instance can handle the request. ")
+            logger.warning(
+                "No available instance",
+                extra={"endpoint": endpoint, "prompt_length": total_length},
+            )
             server.exception_handler(
                 prefill_instance=prefill_instance,
                 decode_instance=decode_instance,
                 req_len=total_length,
             )
-            return JSONResponse(
-                {"error": {"message": "No available instance can handle the request", "type": "proxy_error"}},
-                status_code=503,
-            )
+            return error_response("No available instance can handle the request", PROXY_ERROR, 503)
 
         value = b""
         try:
