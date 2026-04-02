@@ -6,7 +6,7 @@ import itertools
 import logging
 import os
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from xpyd.errors import INVALID_REQUEST, SERVER_ERROR, error_response
 from fastapi.responses import JSONResponse
@@ -51,7 +51,7 @@ def register(router: APIRouter, server) -> None:
                 port = int(port_str)
                 if not (0 < port < 65536):
                     return error_response("Invalid port number", INVALID_REQUEST, 400)
-            except Exception as e:
+            except Exception:
                 return error_response("Invalid instance address", INVALID_REQUEST, 400)
 
             # validate_instance lives on the Proxy class (MicroPDProxyServer.py)

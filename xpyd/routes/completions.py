@@ -10,7 +10,7 @@ from asyncio import CancelledError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_response
+from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
 from xpyd.metrics import track_request_end, track_request_start
 
 logger = logging.getLogger("xpyd.proxy")
