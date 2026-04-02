@@ -1,68 +1,80 @@
-# MicroPDProxy
+# xPyD Proxy
 
-MicroPDProxyServer – a lightweight PD (Prefill-Decode) proxy implementation.
-
-This project provides **dummy prefill and decode nodes** for local development
-and debugging of a PD-separated proxy without any GPU or model dependencies.
-
-The dummy nodes expose the minimum compatibility surface required by the
-validated proxy implementation under `xpyd/`, including:
-
-- `/v1/models`
-- `/v1/completions`
-- `/v1/chat/completions`
-- `/health`
-- `/ping`
-- `/metrics` (Prometheus format)
+A lightweight Prefill-Decode (PD) proxy for disaggregated LLM serving.
 
 ## Architecture
 
-MicroPDProxy implements a **Prefill-Decode (PD) separated** serving
-architecture. Incoming requests are routed through two phases:
+xPyD Proxy routes inference requests through two phases:
 
-1. **Prefill** — sent to a prefill node for KV cache preparation (`max_tokens=1`, `stream=False`)
-2. **Decode** — forwarded to a decode node for autoregressive token generation
+1. **Prefill** — KV cache preparation on prefill nodes (`max_tokens=1`)
+2. **Decode** — autoregressive token generation on decode nodes
 
-The proxy handles scheduling (Round Robin or Load Balanced), health monitoring,
-and dynamic instance management. See [`docs/architecture.md`](docs/architecture.md)
-for the full architecture overview.
+The proxy handles scheduling (load-balanced, round-robin, consistent hash, power-of-two, cache-aware), health monitoring, circuit breaking, and dynamic instance management.
 
-## Quick Start
-
-```bash
-# Install as a CLI tool
-pip install .
-
-# Or install in dev mode
-pip install -e .
-
-# Start with a YAML config
-xpyd --config examples/proxy.yaml
-
-# Or use the traditional way
-pip install -r requirements.txt
-xpyd --config examples/proxy.yaml
-```
+See [`docs/architecture.md`](docs/architecture.md) for details.
 
 ## Installation
 
 ```bash
-# Install the xpyd CLI
 pip install .
 
 # Verify
 xpyd --version
-xpyd --help
-
-# Validate a config without starting the server
-xpyd --validate-config examples/proxy.yaml
 ```
 
-## Usage
+## Quick Start
 
-### Option 1: YAML Configuration (recommended)
+```bash
+# Generate a config template
+xpyd proxy --init-config
 
-Create a YAML config file (see [`examples/proxy.yaml`](examples/proxy.yaml)):
+# Edit xpyd.yaml with your model and node addresses, then:
+xpyd proxy -c xpyd.yaml
+```
+
+## Configuration
+
+All configuration is done via YAML. The CLI only provides operational flags.
+
+### CLI Reference
+
+```
+xpyd proxy [OPTIONS]
+
+Options:
+  --config, -c PATH         Path to YAML config (default: ./xpyd.yaml or XPYD_CONFIG env)
+  --init-config [PATH]      Generate a config template and exit
+  --validate-config PATH    Validate a config file and exit
+  --port PORT               Override port from config
+  --log-level LEVEL         Override log level: debug|info|warning|error
+  --version, -V             Show version and exit
+```
+
+### Config resolution order
+
+1. `--config` / `-c` CLI argument
+2. `XPYD_CONFIG` environment variable
+3. `./xpyd.yaml` in the current directory
+
+### YAML Config
+
+```yaml
+# Required
+model: /path/to/model
+decode:
+  - "10.0.0.1:8200"
+  - "10.0.0.2:8200"
+
+# Optional
+prefill:
+  - "10.0.0.3:8100"
+port: 8000
+log_level: warning
+scheduling: loadbalanced   # roundrobin | loadbalanced | consistent_hash | power_of_two | cache_aware
+generator_on_p_node: false
+```
+
+Topology-style config is also supported:
 
 ```yaml
 model: /path/to/model
@@ -71,103 +83,22 @@ port: 8868
 prefill:
   nodes:
     - "10.0.0.1:8100"
-    - "10.0.0.2:8100"
   tp_size: 8
-  dp_size: 2
+  dp_size: 1
   world_size_per_node: 8
 
 decode:
   nodes:
+    - "10.0.0.2:8200"
     - "10.0.0.3:8200"
-    - "10.0.0.4:8200"
   tp_size: 1
   dp_size: 16
   world_size_per_node: 8
-
-scheduling: loadbalanced
 ```
 
-Start the proxy:
+See [`examples/proxy.yaml`](examples/proxy.yaml) for a fully-commented example.
 
-```bash
-xpyd --config proxy.yaml
-# or
-xpyd --config proxy.yaml
-```
-
-The proxy also searches for config in this order:
-1. `--config` / `-c` CLI argument
-2. `XPYD_CONFIG` environment variable
-3. `./xpyd.yaml` in the current directory
-
-### Startup Node Discovery
-
-The proxy starts listening immediately but returns **503** on business
-endpoints (`/v1/completions`, `/v1/chat/completions`) until at least
-1 prefill + 1 decode node respond healthy. Health/status/metrics
-endpoints are always available.
-
-Configure in YAML:
-
-```yaml
-startup:
-  wait_timeout_seconds: 600   # exit if nodes not ready after 10 min
-  probe_interval_seconds: 10  # probe /health every 10s
-```
-
-The topology parameters expand into instance addresses automatically:
-- **Prefill**: 2 nodes × (8 / 8) = 1 instance/node = 2 instances
-- **Decode**: 2 nodes × (8 / 1) = 8 instances/node = 16 instances
-
-A simple flat-list format is also supported (see [`examples/proxy-simple.yaml`](examples/proxy-simple.yaml)):
-
-```yaml
-model: /path/to/model
-prefill:
-  - "10.0.0.1:8100"
-decode:
-  - "10.0.0.2:8200"
-  - "10.0.0.3:8200"
-```
-
-### Option 2: CLI Arguments
-
-```bash
-xpyd \
-  --model /path/to/model \
-  --prefill 10.0.0.1:8100 10.0.0.2:8100 \
-  --decode 10.0.0.3:8200 10.0.0.4:8200 \
-  --port 8868 \
-  --roundrobin
-```
-
-### Option 3: Parameterized Shell Script
-
-For topology-driven deployments with TP/DP parameters:
-
-```bash
-bash xpyd/xpyd_start_proxy.sh \
-  --model /path/to/model \
-  --prefill-nodes 2 --prefill-tp-size 8 --prefill-dp-size 2 --prefill-world-size-per-node 8 \
-  --decode-nodes 2 --decode-tp-size 1 --decode-dp-size 16 --decode-world-size-per-node 8 \
-  --prefill-base-port 8100 --decode-base-port 8200
-```
-
-### CLI Arguments Reference
-
-| Argument | Short | Default | Description |
-|---|---|---|---|
-| `--config` | `-c` | — | Path to YAML configuration file |
-| `--model` | `-m` | — | Model name / path (required unless in YAML) |
-| `--prefill` | `-p` | — | Prefill node URLs (host:port) |
-| `--decode` | `-d` | — | Decode node URLs (host:port) |
-| `--port` | — | 8000 | Proxy listen port |
-| `--roundrobin` | — | false | Use round-robin scheduling |
-| `--generator_on_p_node` | — | false | Generate first token on prefill node |
-
-When both `--config` and CLI arguments are provided, CLI arguments take precedence.
-
-### YAML Config Fields
+### YAML Fields Reference
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -176,31 +107,32 @@ When both `--config` and CLI arguments are provided, CLI arguments take preceden
 | `log_level` | string | warning | Log level: debug, info, warning, error |
 | `prefill` | list or topology | [] | Prefill node config |
 | `decode` | list or topology | — | Decode node config (required) |
-| `scheduling` | string | loadbalanced | Scheduling policy: roundrobin, loadbalanced |
+| `scheduling` | string | loadbalanced | Scheduling policy |
+| `scheduling_config` | dict | {} | Policy-specific options |
 | `generator_on_p_node` | bool | false | Generate first token on prefill node |
 | `admin_api_key` | string | — | Admin API key (env `ADMIN_API_KEY` overrides) |
 | `openai_api_key` | string | — | OpenAI API key (env `OPENAI_API_KEY` overrides) |
+| `startup.wait_timeout_seconds` | int | 600 | Max wait for nodes at startup |
+| `startup.probe_interval_seconds` | int | 10 | Health probe interval |
 
-## Docker Deployment
+### Startup Node Discovery
+
+The proxy returns **503** on business endpoints until at least 1 prefill + 1 decode node respond healthy. Health/status/metrics endpoints are always available.
+
+## Docker
 
 ```bash
-# Build and run the full local topology (2 prefill + 2 decode + proxy)
+# Full local topology (prefill + decode + proxy)
 docker compose up --build
 
-# Or run just the proxy against existing GPU nodes
-docker build -t microxpyd .
-docker run -p 8868:8868 microxpyd \
-  xpyd \
-  --model tokenizers/DeepSeek-R1 \
-  --prefill 10.0.0.1:8100 --decode 10.0.0.3:8200 \
-  --port 8868
+# Proxy only, connecting to existing GPU nodes
+docker build -t xpyd .
+docker run -p 8868:8868 -v ./config.yaml:/app/xpyd.yaml xpyd
 ```
 
-See [`docs/deployment.md`](docs/deployment.md) for production deployment details.
+See [`docs/deployment.md`](docs/deployment.md) for production deployment.
 
 ## Benchmark
-
-Use vLLM's benchmark tool to test proxy throughput:
 
 ```bash
 python -m vllm bench serve \
@@ -213,32 +145,28 @@ python -m vllm bench serve \
   --request-rate 10
 ```
 
-## Configuration
-
-| Environment Variable | Default | Description |
-|---|---|---|
-| `PREFILL_DELAY_PER_TOKEN` | `0.001` | Simulated per-prompt-token prefill latency (seconds) |
-| `DECODE_DELAY_PER_TOKEN` | `0.01` | Simulated per-decode-token generation latency (seconds) |
-| `ADMIN_API_KEY` | — | API key for admin endpoints (overrides YAML) |
-| `OPENAI_API_KEY` | — | Bearer token for backend nodes (overrides YAML) |
-
-## Running Tests
+## Development
 
 ```bash
-pip install -r requirements.txt
+# Install in dev mode
+pip install -e ".[dev]"
 
-# Run the full test suite
-python -m pytest tests/ -v
+# Run tests
+python -m pytest tests/unit/ tests/integration/ -v
 
-# Run specific test groups
-python -m pytest tests/test_prefill_node.py tests/test_decode_node.py -v  # Node tests
-python -m pytest tests/test_proxy_matrix.py -v                            # Topology matrix
-python -m pytest tests/test_yaml_integration.py -v                        # YAML config integration
-python -m pytest tests/test_config.py tests/test_yaml_config.py -v        # Config validation
-python -m pytest tests/test_topology.py -v                                # Topology expansion
-python -m pytest tests/test_scheduler.py -v                               # Scheduler unit tests
-python -m pytest tests/test_metrics.py -v                                 # Prometheus metrics
+# Lint
+pre-commit run --all-files
 ```
+
+### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `XPYD_CONFIG` | Default config file path |
+| `ADMIN_API_KEY` | Admin API key (overrides YAML) |
+| `OPENAI_API_KEY` | Bearer token for backend nodes (overrides YAML) |
+| `PREFILL_DELAY_PER_TOKEN` | Simulated prefill latency for dummy nodes (default: 0.001s) |
+| `DECODE_DELAY_PER_TOKEN` | Simulated decode latency for dummy nodes (default: 0.01s) |
 
 ## Documentation
 
@@ -246,13 +174,14 @@ python -m pytest tests/test_metrics.py -v                                 # Prom
 |---|---|
 | [Architecture](docs/architecture.md) | System architecture overview |
 | [API Reference](docs/api_reference.md) | HTTP API endpoints |
-| [Configuration](docs/configuration.md) | YAML config file reference |
-| [CLI](docs/cli.md) | xpyd command-line tool (planned) |
+| [Configuration](docs/configuration.md) | YAML config reference |
+| [CLI](docs/cli.md) | xpyd command-line tool |
 | [Scheduling](docs/scheduling.md) | Load balancing strategies |
-| [Resilience](docs/resilience.md) | Health checks, circuit breakers, retry (planned) |
+| [Resilience](docs/resilience.md) | Health checks, circuit breakers, retry |
 | [Metrics](docs/metrics.md) | Prometheus metrics endpoint |
 | [Deployment](docs/deployment.md) | Deployment and Docker guide |
-| [Quick Start](docs/terminal_by_terminal_quickstart.md) | Terminal-by-terminal setup |
-| [One-Click Setup](docs/one_click_dummy_proxy_setup.md) | Quick dummy environment |
-| [Proxy Script](docs/xpyd_start_proxy_usage.md) | xpyd_start_proxy.sh usage |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
+
+## License
+
+Apache-2.0
