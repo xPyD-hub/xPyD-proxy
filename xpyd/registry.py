@@ -13,10 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional
 
-try:
-    from circuit_breaker import CircuitBreaker, CircuitBreakerState
-except ImportError:
-    from .circuit_breaker import CircuitBreaker, CircuitBreakerState
+from xpyd.circuit_breaker import CircuitBreaker, CircuitBreakerState
 
 
 class InstanceStatus(str, Enum):

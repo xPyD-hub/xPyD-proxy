@@ -5,10 +5,7 @@ import itertools
 import logging
 from typing import Optional
 
-try:
-    from .scheduler_base import SchedulingPolicy
-except ImportError:
-    from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 

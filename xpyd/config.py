@@ -38,15 +38,9 @@ class CircuitBreakerConfig(BaseModel):
     timeout_duration_seconds: int = 30
     window_duration_seconds: int = 60
 
-try:
-    from .resilience import ResilienceConfig
-except ImportError:
-    from resilience import ResilienceConfig
+from xpyd.resilience import ResilienceConfig
 
-try:
-    from .topology import expand_topology
-except ImportError:
-    from topology import expand_topology
+from xpyd.topology import expand_topology
 
 
 class HealthCheckConfig(BaseModel):
