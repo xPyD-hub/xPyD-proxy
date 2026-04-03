@@ -803,6 +803,24 @@ def _build_parser():
         help="Override log level: debug|info|warning|error",
     )
 
+    # fix-config subcommand
+    fix_parser = subparsers.add_parser(
+        "fix-config", help="Auto-fix common config mistakes",
+    )
+    fix_parser.add_argument(
+        "config_path", type=str,
+        help="Path to YAML configuration file to fix",
+    )
+    fix_parser.add_argument(
+        "--write", action="store_true", default=False,
+        help="Write fixes back to the file (creates timestamped .bak backup). "
+             "Note: does not preserve YAML comments or formatting.",
+    )
+    fix_parser.add_argument(
+        "--interactive", action="store_true", default=False,
+        help="Prompt for confirmation on ambiguous suggestions",
+    )
+
     return parser
 
 
@@ -836,7 +854,14 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    if args.command == "proxy":
+    if args.command == "fix-config":
+        from xpyd.config_fixer import run_fix_config
+        sys.exit(run_fix_config(
+            args.config_path,
+            write=args.write,
+            interactive=args.interactive,
+        ))
+    elif args.command == "proxy":
         # --init-config: generate template and exit
         if args.init_config is not None:
             generate_config_template(args.init_config)
