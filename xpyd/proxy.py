@@ -82,12 +82,12 @@ AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=None,
                                         sock_read=None,
                                         sock_connect=None)
 
-async def P_first_token_generator(generator_p,
-                                  generator_d,
-                                  callback_owner=None,
-                                  prefill_instance: str = None,
-                                  decode_instance: str = None,
-                                  req_len: int = None) -> AsyncGenerator[bytes, None]:
+async def P_first_token_generator(generator_p: AsyncGenerator[bytes, None],
+                                  generator_d: AsyncGenerator[bytes, None],
+                                  callback_owner: Optional["Proxy"] = None,
+                                  prefill_instance: Optional[str] = None,
+                                  decode_instance: Optional[str] = None,
+                                  req_len: Optional[int] = None) -> AsyncGenerator[bytes, None]:
     first_decode = True
 
     try:
@@ -115,12 +115,12 @@ async def P_first_token_generator(generator_p,
                 req_len=req_len
             )
 
-async def D_first_token_generator(generator_p,
-                                  generator_d,
-                                  callback_owner=None,
-                                  prefill_instance: str = None,
-                                  decode_instance: str = None,
-                                  req_len: int = None) -> AsyncGenerator[bytes, None]:
+async def D_first_token_generator(generator_p: AsyncGenerator[bytes, None],
+                                  generator_d: AsyncGenerator[bytes, None],
+                                  callback_owner: Optional["Proxy"] = None,
+                                  prefill_instance: Optional[str] = None,
+                                  decode_instance: Optional[str] = None,
+                                  req_len: Optional[int] = None) -> AsyncGenerator[bytes, None]:
     try:
         async for _ in generator_p:
             continue
@@ -245,9 +245,9 @@ class Proxy:
         )
 
     def schedule_completion(self,
-                            prefill_instance: str = None,
-                            decode_instance: str = None,
-                            req_len: int = None) -> None:
+                            prefill_instance: Optional[str] = None,
+                            decode_instance: Optional[str] = None,
+                            req_len: Optional[int] = None) -> None:
         self.scheduling_policy.schedule_completion(
             prefill_instance=prefill_instance,
             decode_instance=decode_instance,
