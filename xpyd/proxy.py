@@ -87,7 +87,7 @@ async def P_first_token_generator(generator_p,
                                   callback_owner=None,
                                   prefill_instance: str = None,
                                   decode_instance: str = None,
-                                  req_len: int = None):
+                                  req_len: int = None) -> AsyncGenerator[bytes, None]:
     first_decode = True
 
     try:
@@ -120,7 +120,7 @@ async def D_first_token_generator(generator_p,
                                   callback_owner=None,
                                   prefill_instance: str = None,
                                   decode_instance: str = None,
-                                  req_len: int = None):
+                                  req_len: int = None) -> AsyncGenerator[bytes, None]:
     try:
         async for _ in generator_p:
             continue
@@ -207,6 +207,10 @@ class Proxy:
                             error_content = error_content
                         logger.error("Request failed with status %s: %s",
                                      response.status, error_content)
+                        # HTTPException is intentional: forward_request is
+                        # an async generator, so it cannot return a
+                        # JSONResponse.  Callers catch HTTPException and
+                        # convert it to error_response().
                         raise HTTPException(
                             status_code=response.status,
                             detail=
@@ -215,6 +219,7 @@ class Proxy:
                         )
             except aiohttp.ClientError as e:
                 logger.error("ClientError occurred: %s", str(e))
+                # See comment above re: async generator context.
                 raise HTTPException(
                     status_code=502,
                     detail=
@@ -222,6 +227,7 @@ class Proxy:
                 ) from e
             except Exception as e:
                 logger.exception("Unexpected error in forward_request")
+                # See comment above re: async generator context.
                 raise HTTPException(
                     status_code=500,
                     detail="Internal proxy error",
@@ -241,7 +247,7 @@ class Proxy:
     def schedule_completion(self,
                             prefill_instance: str = None,
                             decode_instance: str = None,
-                            req_len: int = None):
+                            req_len: int = None) -> None:
         self.scheduling_policy.schedule_completion(
             prefill_instance=prefill_instance,
             decode_instance=decode_instance,
@@ -556,7 +562,7 @@ class ProxyServer:
                 raise ValueError(
                     f"Error communicating with {instance}: {str(e)}") from e
 
-    def run_server(self):
+    def run_server(self) -> None:
         discovery = NodeDiscovery(
             prefill_instances=self._all_prefill,
             decode_instances=self._all_decode,
@@ -690,7 +696,7 @@ def _resolve_config_path(args):
     sys.exit(1)
 
 
-def main():
+def main() -> None:
     """Entry point for the ``xpyd`` CLI."""
     from xpyd.init_config import generate_config_template
 
