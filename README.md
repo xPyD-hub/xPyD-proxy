@@ -4,12 +4,20 @@ A lightweight Prefill-Decode (PD) proxy for disaggregated LLM serving.
 
 ## Architecture
 
-xPyD Proxy routes inference requests through two phases:
+xPyD Proxy supports two operating modes:
+
+### Prefill-Decode (P/D) Disaggregated Mode
+
+Requests are routed through two phases with KV cache transfer:
 
 1. **Prefill** — KV cache preparation on prefill nodes (`max_tokens=1`)
-2. **Decode** — autoregressive token generation on decode nodes
+2. **Decode** — autoregressive token generation on decode nodes (receives KV cache from prefill)
 
-The proxy handles scheduling (load-balanced, round-robin, consistent hash, power-of-two, cache-aware), health monitoring, circuit breaking, and dynamic instance management.
+### Dual-Role Mode
+
+A single instance handles both prefill and decode in one pass — no KV transfer needed. This simplifies deployment when disaggregation is not required or for smaller-scale setups.
+
+The proxy handles scheduling (load-balanced, round-robin, consistent hash, power-of-two, cache-aware), health monitoring, circuit breaking, and dynamic instance management. Multi-model routing allows serving multiple models through a single proxy with per-model scheduler configuration.
 
 See [`docs/architecture.md`](docs/architecture.md) for details.
 
@@ -34,7 +42,87 @@ xpyd proxy -c xpyd.yaml
 
 ## Configuration
 
-All configuration is done via YAML. The CLI only provides operational flags.
+All configuration is done via YAML. Three config formats are supported.
+
+### Format 1: Legacy (Single Model)
+
+Simple prefill/decode address lists for a single model:
+
+```yaml
+model: /path/to/model
+prefill:
+  - "10.0.0.3:8100"
+decode:
+  - "10.0.0.1:8200"
+  - "10.0.0.2:8200"
+port: 8000
+scheduling: loadbalanced
+```
+
+Topology-style config is also supported in Format 1:
+
+```yaml
+model: /path/to/model
+port: 8868
+
+prefill:
+  nodes:
+    - "10.0.0.1:8100"
+  tp_size: 8
+  dp_size: 1
+  world_size_per_node: 8
+
+decode:
+  nodes:
+    - "10.0.0.2:8200"
+    - "10.0.0.3:8200"
+  tp_size: 1
+  dp_size: 16
+  world_size_per_node: 8
+```
+
+### Format 2: Instances (Multi-Model, Per-Instance Role)
+
+Explicit per-instance configuration with role and model assignment. Supports `dual` role:
+
+```yaml
+instances:
+  - address: "10.0.0.1:8000"
+    role: prefill
+    model: llama-3
+  - address: "10.0.0.2:8000"
+    role: decode
+    model: llama-3
+  - address: "10.0.0.3:8000"
+    role: dual
+    model: qwen-2
+port: 8000
+scheduling: loadbalanced
+```
+
+### Format 3: Models Shorthand (Multi-Model, Per-Model Scheduler)
+
+Compact format with per-model scheduler override and `dual` shorthand:
+
+```yaml
+models:
+  - name: llama-3
+    prefill:
+      - "10.0.0.1:8000"
+    decode:
+      - "10.0.0.2:8000"
+    scheduler: round_robin
+  - name: qwen-2
+    dual:
+      - "10.0.0.3:8000"
+      - "10.0.0.4:8000"
+    scheduler: loadbalanced
+port: 8000
+```
+
+> **Note:** `instances` and `models` cannot be combined. Legacy `prefill`/`decode` lists cannot be used with `instances` or `models`.
+
+See [`examples/proxy.yaml`](examples/proxy.yaml) for a fully-commented example.
 
 ### CLI Reference
 
@@ -48,6 +136,20 @@ Options:
   --port PORT               Override port from config
   --log-level LEVEL         Override log level: debug|info|warning|error
   --version, -V             Show version and exit
+```
+
+```
+xpyd fix-config CONFIG_PATH [OPTIONS]
+
+Auto-fix common config mistakes (typos, missing ports, whitespace).
+
+Arguments:
+  CONFIG_PATH               Path to YAML config file to fix
+
+Options:
+  --write                   Write fixes back to file (creates timestamped .bak backup).
+                            Note: does not preserve YAML comments or formatting.
+  --interactive             Prompt for confirmation on ambiguous suggestions
 ```
 
 ### Config resolution order
@@ -74,40 +176,20 @@ scheduling: loadbalanced   # roundrobin | loadbalanced | consistent_hash | power
 generator_on_p_node: false
 ```
 
-Topology-style config is also supported:
-
-```yaml
-model: /path/to/model
-port: 8868
-
-prefill:
-  nodes:
-    - "10.0.0.1:8100"
-  tp_size: 8
-  dp_size: 1
-  world_size_per_node: 8
-
-decode:
-  nodes:
-    - "10.0.0.2:8200"
-    - "10.0.0.3:8200"
-  tp_size: 1
-  dp_size: 16
-  world_size_per_node: 8
-```
-
 See [`examples/proxy.yaml`](examples/proxy.yaml) for a fully-commented example.
 
 ### YAML Fields Reference
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `model` | string | — | Model name / path (required) |
+| `model` | string | — | Model name / path (required in Format 1) |
 | `port` | int | 8000 | Proxy listen port |
 | `log_level` | string | warning | Log level: debug, info, warning, error |
-| `prefill` | list or topology | [] | Prefill node config |
-| `decode` | list or topology | — | Decode node config (required) |
-| `scheduling` | string | loadbalanced | Scheduling policy |
+| `prefill` | list or topology | [] | Prefill node config (Format 1) |
+| `decode` | list or topology | — | Decode node config (Format 1, required) |
+| `instances` | list | — | Per-instance config (Format 2): `{address, role, model}` |
+| `models` | list | — | Per-model shorthand (Format 3): `{name, prefill, decode, dual, scheduler}` |
+| `scheduling` | string | loadbalanced | Global scheduling policy |
 | `scheduling_config` | dict | {} | Policy-specific options |
 | `generator_on_p_node` | bool | false | Generate first token on prefill node |
 | `admin_api_key` | string | — | Admin API key (env `ADMIN_API_KEY` overrides) |
@@ -115,9 +197,21 @@ See [`examples/proxy.yaml`](examples/proxy.yaml) for a fully-commented example.
 | `startup.wait_timeout_seconds` | int | 600 | Max wait for nodes at startup |
 | `startup.probe_interval_seconds` | int | 10 | Health probe interval |
 
+**Valid `role` values:** `prefill`, `decode`, `dual`
+
+**Valid `scheduling` values:** `loadbalanced`, `roundrobin` (alias: `round_robin`), `load_balanced`, `consistent_hash`, `power_of_two`, `cache_aware`
+
+### API
+
+The proxy exposes an OpenAI-compatible API:
+
+- **`POST /v1/chat/completions`** — Chat completions (streaming and non-streaming)
+- **`POST /v1/completions`** — Text completions (streaming and non-streaming)
+- **`GET /v1/models`** — List all registered models in OpenAI-compatible format
+
 ### Startup Node Discovery
 
-The proxy returns **503** on business endpoints until at least 1 prefill + 1 decode node respond healthy. Health/status/metrics endpoints are always available.
+The proxy returns **503** on business endpoints until the minimum instance requirement is met: at least **1 prefill + 1 decode** node, or **1 dual** node per model must respond healthy. Health/status/metrics endpoints are always available.
 
 ## Docker
 
