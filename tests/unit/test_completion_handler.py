@@ -20,6 +20,7 @@ def server():
     srv.get_total_token_length = MagicMock(
         side_effect=lambda x: len(x) if isinstance(x, str) else 0
     )
+    srv._is_dual_model = MagicMock(return_value=False)
     return srv
 
 

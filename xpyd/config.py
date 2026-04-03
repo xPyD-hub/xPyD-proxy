@@ -22,6 +22,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -64,8 +65,10 @@ class InstanceEntry(BaseModel):
     @field_validator("role")
     @classmethod
     def _valid_role(cls, v: str) -> str:
-        if v not in ("prefill", "decode"):
-            raise ValueError(f"role must be 'prefill' or 'decode', got {v!r}")
+        if v not in ("prefill", "decode", "dual"):
+            raise ValueError(
+                f"role must be 'prefill', 'decode', or 'dual', got {v!r}"
+            )
         return v
 
     @field_validator("address")
@@ -116,6 +119,7 @@ class ProxyConfig(BaseModel):
     health_check: HealthCheckConfig = HealthCheckConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
     retry: ResilienceConfig = ResilienceConfig()
+    _model_schedulers: Dict[str, str] = PrivateAttr(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Validators
@@ -182,16 +186,9 @@ class ProxyConfig(BaseModel):
                     "Cannot use 'instances' or 'models' together with "
                     "legacy 'prefill'/'decode' lists."
                 )
-            # Still require at least one decode entry
+            # Each model needs (P+D) or (dual), not strictly decode
             if self.instances is not None:
-                has_decode = any(
-                    e.role == "decode" for e in self.instances
-                )
-                if not has_decode:
-                    raise ValueError(
-                        "Please specify at least one decode node "
-                        "in the instances list."
-                    )
+                self._validate_instance_roles(self.instances)
             return self
         if not self.decode:
             raise ValueError(
@@ -203,6 +200,30 @@ class ProxyConfig(BaseModel):
             )
         return self
 
+    @staticmethod
+    def _validate_instance_roles(instances: List[InstanceEntry]) -> None:
+        """Validate that each model has either (P+D) or (dual), not mixed."""
+        from collections import defaultdict
+        model_roles: Dict[str, set] = defaultdict(set)
+        for e in instances:
+            model_roles[e.model].add(e.role)
+        for model_name, roles in model_roles.items():
+            has_dual = "dual" in roles
+            has_pd = "prefill" in roles or "decode" in roles
+            if has_dual and has_pd:
+                raise ValueError(
+                    f"Model {model_name!r} mixes dual and prefill/decode "
+                    f"instances. A model must use either all dual or "
+                    f"prefill+decode instances, not both."
+                )
+            if not has_dual:
+                if "prefill" not in roles or "decode" not in roles:
+                    raise ValueError(
+                        f"Model {model_name!r} requires at least one prefill "
+                        f"and one decode instance (or use all dual instances)."
+                    )
+            # dual-only model is valid
+
     @model_validator(mode="after")
     def _expand_models_to_instances(self) -> "ProxyConfig":
         """Expand the 'models' shorthand into the 'instances' list."""
@@ -212,11 +233,28 @@ class ProxyConfig(BaseModel):
                     "Cannot specify both 'models' and 'instances'."
                 )
             expanded: List[InstanceEntry] = []
+            model_schedulers: Dict[str, str] = {}
+            _known_model_keys = {
+                "name", "prefill", "decode", "dual", "scheduler",
+            }
             for entry in self.models:
                 name = entry.get("name", "")
                 if not name:
                     raise ValueError(
                         "Each model in 'models' must have a non-empty 'name'."
+                    )
+                unknown_keys = set(entry.keys()) - _known_model_keys
+                if unknown_keys:
+                    raise ValueError(
+                        f"Unknown keys in model {name!r}: "
+                        f"{sorted(unknown_keys)}"
+                    )
+                has_dual = bool(entry.get("dual"))
+                has_pd = bool(entry.get("prefill")) or bool(entry.get("decode"))
+                if has_dual and has_pd:
+                    raise ValueError(
+                        f"Model {name!r} cannot have both 'dual' and "
+                        f"'prefill'/'decode' fields."
                     )
                 for addr in entry.get("prefill", []):
                     expanded.append(InstanceEntry(
@@ -226,14 +264,17 @@ class ProxyConfig(BaseModel):
                     expanded.append(InstanceEntry(
                         address=addr, role="decode", model=name,
                     ))
+                for addr in entry.get("dual", []):
+                    expanded.append(InstanceEntry(
+                        address=addr, role="dual", model=name,
+                    ))
+                if "scheduler" in entry:
+                    model_schedulers[name] = entry["scheduler"]
             self.instances = expanded
+            self._model_schedulers = model_schedulers
             self.models = None  # consumed
-            # Validate at least one decode entry after expansion
-            if not any(e.role == "decode" for e in expanded):
-                raise ValueError(
-                    "Please specify at least one decode node "
-                    "in the models config."
-                )
+            # Validate roles after expansion
+            self._validate_instance_roles(expanded)
         return self
 
     # ------------------------------------------------------------------

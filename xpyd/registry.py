@@ -91,8 +91,8 @@ class InstanceRegistry:
             ValueError: If role is not "prefill" or "decode".
             ValueError: If address is already registered.
         """
-        if role not in ("prefill", "decode"):
-            raise ValueError(f"Invalid role: {role!r}. Must be 'prefill' or 'decode'.")
+        if role not in ("prefill", "decode", "dual"):
+            raise ValueError(f"Invalid role: {role!r}. Must be 'prefill', 'decode', or 'dual'.")
         with self._lock:
             if address in self._instances:
                 raise ValueError(f"Instance {address!r} is already registered.")
@@ -140,6 +140,31 @@ class InstanceRegistry:
             results = []
             for instance in self._instances.values():
                 if instance.role != role:
+                    continue
+                if model and instance.model != model:
+                    continue
+                if instance.status != InstanceStatus.HEALTHY:
+                    continue
+                if (
+                    self._cb_enabled
+                    and instance.circuit_breaker.state != CircuitBreakerState.CLOSED
+                ):
+                    continue
+                results.append(instance.address)
+            return results
+
+    def get_dual_instances(self, model: str = "") -> List[str]:
+        """Return available dual instances, optionally filtered by model.
+
+        Uses the same availability criteria as get_available_instances:
+        only healthy instances with closed circuit breakers are returned.
+        HALF_OPEN instances are reserved for the circuit-breaker probe
+        mechanism (via the health monitor) and excluded from scheduling.
+        """
+        with self._lock:
+            results = []
+            for instance in self._instances.values():
+                if instance.role != "dual":
                     continue
                 if model and instance.model != model:
                     continue
@@ -297,6 +322,21 @@ class InstanceRegistry:
         with self._lock:
             instance = self._get_instance(address)
             instance.active_request_count = max(0, instance.active_request_count - 1)
+
+    def get_active_requests(self, address: str) -> int:
+        """Return the active request count for an instance.
+
+        Args:
+            address: Instance address.
+
+        Returns:
+            Active request count, or 0 if not registered.
+        """
+        with self._lock:
+            try:
+                return self._get_instance(address).active_request_count
+            except KeyError:
+                return 0
 
     def _get_instance(self, address: str) -> _InstanceRecord:
         """Get instance by address or raise KeyError. Must hold lock."""
