@@ -1,16 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Completion route handlers."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
 import time
 from asyncio import CancelledError
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
+
+if TYPE_CHECKING:
+    from xpyd.proxy import Proxy
 from xpyd.metrics import track_request_end, track_request_start
 
 logger = logging.getLogger("xpyd.proxy")
@@ -21,7 +27,7 @@ logger = logging.getLogger("xpyd.proxy")
 # ---------------------------------------------------------------------------
 
 
-def validate_completion_request(request, is_chat):
+def validate_completion_request(request: dict, is_chat: bool) -> JSONResponse | None:
     """Validate required fields. Returns JSONResponse on error, None on success."""
     if is_chat:
         if "messages" not in request:
@@ -34,7 +40,7 @@ def validate_completion_request(request, is_chat):
     return None
 
 
-def extract_prompt_info(request, is_chat, server):
+def extract_prompt_info(request: dict, is_chat: bool, server: Proxy) -> tuple[int, int, str]:
     """Extract prompt metrics. Returns (total_length, max_tokens, prompt_text)."""
     if is_chat:
         total_length = 0
@@ -64,7 +70,7 @@ def extract_prompt_info(request, is_chat, server):
     return total_length, max_tokens, prompt_text
 
 
-def build_kv_prepare_request(request, is_chat):
+def build_kv_prepare_request(request: dict, is_chat: bool) -> dict:
     """Build the KV-prepare request with max_tokens=1."""
     kv_prepare_request = request.copy()
     kv_prepare_request["max_tokens"] = 1
@@ -73,7 +79,7 @@ def build_kv_prepare_request(request, is_chat):
     return kv_prepare_request
 
 
-async def handle_completion(endpoint, raw_request, server, is_chat):
+async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, is_chat: bool) -> JSONResponse | StreamingResponse:
     """Unified completion handler for both /v1/completions and /v1/chat/completions."""
     _metrics_start = track_request_start(endpoint)
     handler_name = "create_chat_completion" if is_chat else "create_completion"
@@ -245,10 +251,13 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
 # ---------------------------------------------------------------------------
 
 
-def register(router: APIRouter, server) -> None:
+def register(router: APIRouter, server: Proxy) -> None:
     """Register completion routes on *router*."""
 
     async def _validate_json(raw_request: Request):
+        # HTTPException is intentional here: FastAPI Depends() dependencies
+        # cannot return a JSONResponse to short-circuit the request; only
+        # raising an exception aborts the dependency chain.
         content_type = raw_request.headers.get("content-type", "").lower()
         if content_type != "application/json":
             raise HTTPException(
