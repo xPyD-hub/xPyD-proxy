@@ -121,6 +121,7 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
                 raw_request.client.host if raw_request.client else None
             ),
             "prompt": prompt_text,
+            "model": request.get("model", ""),
         }
 
         prefill_instance = server.schedule(
@@ -140,10 +141,21 @@ async def handle_completion(endpoint, raw_request, server, is_chat):
         )
 
         if prefill_instance is None or decode_instance is None:
+            requested_model = request.get("model", "")
             logger.warning(
                 "No available instance",
-                extra={"endpoint": endpoint, "prompt_length": total_length},
+                extra={"endpoint": endpoint, "prompt_length": total_length, "model": requested_model},
             )
+            # Check for unknown model first to return a clean 404 without
+            # triggering error-path side effects (logging, metrics, etc.)
+            if requested_model and server.registry is not None:
+                known_models = server.registry.get_registered_models()
+                if requested_model not in known_models:
+                    return error_response(
+                        f"The model '{requested_model}' does not exist",
+                        INVALID_REQUEST,
+                        404,
+                    )
             server.exception_handler(
                 prefill_instance=prefill_instance,
                 decode_instance=decode_instance,

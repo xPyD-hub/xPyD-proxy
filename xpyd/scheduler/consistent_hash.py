@@ -163,6 +163,7 @@ class ConsistentHashPolicy(SchedulingPolicy):
         is_prompt: Optional[bool] = None,
         request_len: Optional[int] = None,
         max_tokens: Optional[int] = None,
+        model: str = "",
         *,
         header: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -181,7 +182,7 @@ class ConsistentHashPolicy(SchedulingPolicy):
         """
         if self._registry is not None:
             role = "prefill" if is_prompt else "decode"
-            candidates = set(self._registry.get_available_instances(role))
+            candidates = set(self._registry.get_available_instances(role, model=model))
             if candidates:
                 return self.select_from(
                     candidates,

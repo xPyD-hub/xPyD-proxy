@@ -34,6 +34,7 @@ class InstanceInfo:
 
     address: str
     role: str  # "prefill" or "decode"
+    model: str = ""  # model name this instance serves
     status: InstanceStatus = InstanceStatus.UNKNOWN
     last_health_check: Optional[float] = None
     active_request_count: int = 0
@@ -46,6 +47,7 @@ class _InstanceRecord:
 
     address: str
     role: str
+    model: str = ""  # model name this instance serves
     status: InstanceStatus = InstanceStatus.UNKNOWN
     last_health_check: Optional[float] = None
     active_request_count: int = 0
@@ -76,12 +78,14 @@ class InstanceRegistry:
         self._cb_timeout_duration_seconds = timeout_duration_seconds
         self._cb_window_duration_seconds = window_duration_seconds
 
-    def add(self, role: str, address: str) -> None:
-        """Register an instance with the given role and address.
+    def add(self, role: str, address: str, model: str = "") -> None:
+        """Register an instance with the given role, address, and model.
 
         Args:
             role: Instance role, either "prefill" or "decode".
             address: Instance address (e.g. "10.0.0.1:8200").
+            model: Model name this instance serves. Empty string means
+                unspecified (backward compatible).
 
         Raises:
             ValueError: If role is not "prefill" or "decode".
@@ -95,6 +99,7 @@ class InstanceRegistry:
             self._instances[address] = _InstanceRecord(
                 address=address,
                 role=role,
+                model=model,
                 circuit_breaker=CircuitBreaker(
                     failure_threshold=self._cb_failure_threshold,
                     success_threshold=self._cb_success_threshold,
@@ -118,11 +123,13 @@ class InstanceRegistry:
                 raise KeyError(f"Instance {address!r} is not registered.")
             del self._instances[address]
 
-    def get_available_instances(self, role: str) -> List[str]:
+    def get_available_instances(self, role: str, model: str = "") -> List[str]:
         """Return addresses of healthy instances with closed circuit breakers.
 
         Args:
             role: Filter by role ("prefill" or "decode").
+            model: Filter by model name. When empty string (default),
+                no model filtering is applied (backward compat).
 
         Returns:
             List of instance addresses that are healthy and have a closed
@@ -134,6 +141,8 @@ class InstanceRegistry:
             for instance in self._instances.values():
                 if instance.role != role:
                     continue
+                if model and instance.model != model:
+                    continue
                 if instance.status != InstanceStatus.HEALTHY:
                     continue
                 if (
@@ -143,6 +152,34 @@ class InstanceRegistry:
                     continue
                 results.append(instance.address)
             return results
+
+    def get_registered_models(self) -> List[str]:
+        """Return unique model names across all registered instances.
+
+        Returns:
+            Sorted list of unique non-empty model names.
+        """
+        with self._lock:
+            models = {
+                inst.model
+                for inst in self._instances.values()
+                if inst.model
+            }
+            return sorted(models)
+
+    def update_model(self, address: str, model: str) -> None:
+        """Update the model name for a registered instance.
+
+        Args:
+            address: Instance address.
+            model: New model name.
+
+        Raises:
+            KeyError: If address is not registered.
+        """
+        with self._lock:
+            instance = self._get_instance(address)
+            instance.model = model
 
     def mark_healthy(self, address: str) -> None:
         """Mark an instance as healthy (called by health monitor).
@@ -219,6 +256,7 @@ class InstanceRegistry:
             return InstanceInfo(
                 address=instance.address,
                 role=instance.role,
+                model=instance.model,
                 status=instance.status,
                 last_health_check=instance.last_health_check,
                 active_request_count=instance.active_request_count,

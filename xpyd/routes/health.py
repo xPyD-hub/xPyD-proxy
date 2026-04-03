@@ -6,6 +6,9 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from xpyd.metrics import get_metrics
 
+# Fixed epoch timestamp for model listing (avoids changing on every request)
+_MODEL_CREATED_EPOCH = 0
+
 
 def register(router: APIRouter, server) -> None:
     """Register health/info routes on *router*."""
@@ -17,6 +20,23 @@ def register(router: APIRouter, server) -> None:
         return await server.get_from_instance("/ping", is_full_instancelist=1)
 
     async def get_models():
+        # Multi-model: return all registered models from registry
+        if server.registry is not None:
+            models = server.registry.get_registered_models()
+            data = [
+                {
+                    "id": m,
+                    "object": "model",
+                    "created": _MODEL_CREATED_EPOCH,
+                    "owned_by": "system",
+                }
+                for m in models
+            ]
+            return JSONResponse(
+                content={"object": "list", "data": data},
+                status_code=200,
+            )
+        # No registry (should not happen in normal operation) — forward
         return await server.get_from_instance("/v1/models")
 
     async def get_version():

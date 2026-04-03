@@ -171,7 +171,7 @@ CHAT_PAYLOAD = {
 
 
 def test_models_endpoint(cluster):
-    """Proxy /v1/models returns per-instance aggregated response."""
+    """Proxy /v1/models returns OpenAI-compatible model listing."""
     with httpx.Client(
         base_url=f"http://127.0.0.1:{cluster['proxy_port']}",
         timeout=10,
@@ -180,12 +180,11 @@ def test_models_endpoint(cluster):
         r = c.get("/v1/models")
         assert r.status_code == 200
         data = r.json()
-        # Proxy returns per-instance aggregated response
-        assert len(data) > 0, "No instances in /v1/models response"
-        for _instance, result in data.items():
-            assert result["status"] == 200
-            assert "data" in result["data"]
-            assert len(result["data"]["data"]) > 0
+        assert data["object"] == "list"
+        assert len(data["data"]) > 0, "No models in /v1/models response"
+        for model in data["data"]:
+            assert "id" in model
+            assert model["object"] == "model"
 
 
 def test_chat_completions(cluster):

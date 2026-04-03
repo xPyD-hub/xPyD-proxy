@@ -194,3 +194,110 @@ class TestProxyConfigFromYaml:
     def test_from_yaml_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             ProxyConfig.from_yaml("/nonexistent/path.yaml")
+
+
+class TestMultiModelConfig:
+    """Config parsing tests for multi-model format."""
+
+    def test_instances_config_valid(self):
+        cfg = ProxyConfig(
+            instances=[
+                {"address": "10.0.0.1:8000", "role": "prefill", "model": "llama-3"},
+                {"address": "10.0.0.2:8000", "role": "decode", "model": "llama-3"},
+            ],
+        )
+        assert len(cfg.instances) == 2
+        assert cfg.instances[0].model == "llama-3"
+
+    def test_models_shorthand_expands(self):
+        cfg = ProxyConfig(
+            models=[
+                {
+                    "name": "llama-3",
+                    "prefill": ["10.0.0.1:8000"],
+                    "decode": ["10.0.0.2:8000"],
+                },
+            ],
+        )
+        assert cfg.instances is not None
+        assert len(cfg.instances) == 2
+        assert cfg.models is None  # consumed
+
+    def test_models_shorthand_empty_name_rejected(self):
+        with pytest.raises(ValueError, match="non-empty 'name'"):
+            ProxyConfig(
+                models=[
+                    {
+                        "prefill": ["10.0.0.1:8000"],
+                        "decode": ["10.0.0.2:8000"],
+                    },
+                ],
+            )
+
+    def test_models_shorthand_no_decode_rejected(self):
+        with pytest.raises(ValueError, match="at least one decode"):
+            ProxyConfig(
+                models=[
+                    {
+                        "name": "llama-3",
+                        "prefill": ["10.0.0.1:8000"],
+                    },
+                ],
+            )
+
+    def test_instances_no_decode_rejected(self):
+        with pytest.raises(ValueError, match="at least one decode"):
+            ProxyConfig(
+                instances=[
+                    {"address": "10.0.0.1:8000", "role": "prefill", "model": "llama-3"},
+                ],
+            )
+
+    def test_both_models_and_instances_rejected(self):
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            ProxyConfig(
+                models=[
+                    {
+                        "name": "a",
+                        "prefill": ["10.0.0.1:8000"],
+                        "decode": ["10.0.0.2:8000"],
+                    }
+                ],
+                instances=[
+                    {"address": "10.0.0.3:8000", "role": "prefill", "model": "b"},
+                    {"address": "10.0.0.4:8000", "role": "decode", "model": "b"},
+                ],
+            )
+
+    def test_old_single_model_still_works(self):
+        cfg = ProxyConfig(
+            model="llama-3",
+            decode=["10.0.0.1:8000"],
+        )
+        assert cfg.model == "llama-3"
+        assert cfg.instances is None
+
+    def test_from_args_multi_model_yaml(self, tmp_path):
+        p = tmp_path / "multi.yaml"
+        p.write_text(
+            "instances:\n"
+            "  - address: '10.0.0.1:8000'\n"
+            "    role: prefill\n"
+            "    model: llama-3\n"
+            "  - address: '10.0.0.2:8000'\n"
+            "    role: decode\n"
+            "    model: llama-3\n"
+        )
+        args = argparse.Namespace(
+            config=str(p),
+            model=None,
+            prefill=None,
+            decode=None,
+            port=8000,
+            generator_on_p_node=False,
+            roundrobin=False,
+            log_level="warning",
+        )
+        cfg = ProxyConfig.from_args(args)
+        assert cfg.instances is not None
+        assert len(cfg.instances) == 2
