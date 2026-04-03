@@ -72,39 +72,20 @@ class TestScheduleDualCompletion:
     """Test single load accounting for dual."""
 
     def test_single_accounting(self):
-        policy = MagicMock()
+        registry = MagicMock()
         proxy = MagicMock()
-        proxy.scheduling_policy = policy
+        proxy.registry = registry
         from xpyd.proxy import Proxy
 
         Proxy.schedule_dual_completion(proxy, "10.0.0.1:8000", req_len=100)
-        policy.schedule_completion.assert_called_once_with(
-            prefill_instance=None,
-            decode_instance="10.0.0.1:8000",
-            req_len=100,
+        registry.decrement_active_requests.assert_called_once_with(
+            "10.0.0.1:8000",
         )
 
-
-class TestPerModelScheduler:
-    """Test per-model scheduler selection."""
-
-    def test_model_scheduler_used(self):
-        model_sched = MagicMock()
-        global_sched = MagicMock()
+    def test_no_registry(self):
         proxy = MagicMock()
-        proxy.model_schedulers = {"qwen-2": model_sched}
-        proxy.scheduling_policy = global_sched
+        proxy.registry = None
         from xpyd.proxy import Proxy
 
-        result = Proxy._get_model_scheduler(proxy, "qwen-2")
-        assert result is model_sched
-
-    def test_fallback_to_global(self):
-        global_sched = MagicMock()
-        proxy = MagicMock()
-        proxy.model_schedulers = {}
-        proxy.scheduling_policy = global_sched
-        from xpyd.proxy import Proxy
-
-        result = Proxy._get_model_scheduler(proxy, "unknown-model")
-        assert result is global_sched
+        # Should not raise even without registry
+        Proxy.schedule_dual_completion(proxy, "10.0.0.1:8000", req_len=100)

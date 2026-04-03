@@ -129,7 +129,9 @@ class TestRequireDecodeWithDual:
         assert len(cfg.instances) == 1
 
     def test_pd_without_decode_rejected(self):
-        with pytest.raises(ValueError, match="at least one decode"):
+        with pytest.raises(
+            ValueError, match="requires at least one prefill and one decode"
+        ):
             ProxyConfig(
                 instances=[
                     {"address": "10.0.0.1:8000", "role": "prefill", "model": "llama-3"},

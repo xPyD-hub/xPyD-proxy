@@ -156,8 +156,10 @@ class InstanceRegistry:
     def get_dual_instances(self, model: str = "") -> List[str]:
         """Return available dual instances, optionally filtered by model.
 
-        Only returns instances that are healthy and have a closed circuit
-        breaker (same availability criteria as get_available_instances).
+        Uses the same availability criteria as get_available_instances:
+        only healthy instances with closed circuit breakers are returned.
+        HALF_OPEN instances are reserved for the circuit-breaker probe
+        mechanism (via the health monitor) and excluded from scheduling.
         """
         with self._lock:
             results = []

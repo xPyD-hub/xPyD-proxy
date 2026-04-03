@@ -217,10 +217,10 @@ class ProxyConfig(BaseModel):
                     f"prefill+decode instances, not both."
                 )
             if not has_dual:
-                if "decode" not in roles:
+                if "prefill" not in roles or "decode" not in roles:
                     raise ValueError(
-                        "Please specify at least one decode node "
-                        "in the instances list."
+                        f"Model {model_name!r} requires at least one prefill "
+                        f"and one decode instance (or use all dual instances)."
                     )
             # dual-only model is valid
 

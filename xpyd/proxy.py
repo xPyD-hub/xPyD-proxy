@@ -180,10 +180,6 @@ class Proxy:
         """Check if all instances for a model are dual-role."""
         return model in self.dual_instances and len(self.dual_instances[model]) > 0
 
-    def _get_model_scheduler(self, model: str) -> SchedulingPolicy:
-        """Get scheduler for a model, falling back to the global policy."""
-        return self.model_schedulers.get(model, self.scheduling_policy)
-
     def schedule_dual(self, model: str, **kwargs) -> Optional[str]:
         """Schedule a dual instance for the given model.
 
@@ -206,7 +202,9 @@ class Proxy:
                 self._dual_rr_counters: dict[str, int] = {}
             idx = self._dual_rr_counters.get(model, 0) % len(available)
             self._dual_rr_counters[model] = idx + 1
-            return available[idx]
+            selected = available[idx]
+            self.registry.increment_active_requests(selected)
+            return selected
         # No registry: round-robin over configured instances
         if not hasattr(self, "_dual_rr_counters"):
             self._dual_rr_counters: dict[str, int] = {}
@@ -219,14 +217,14 @@ class Proxy:
         instance: str,
         req_len: Optional[int] = None,
     ) -> None:
-        """Single load accounting for dual instance completion."""
-        scheduler = self.scheduling_policy
-        # Use schedule_completion with only one instance (not two)
-        scheduler.schedule_completion(
-            prefill_instance=None,
-            decode_instance=instance,
-            req_len=req_len,
-        )
+        """Load accounting for dual instance completion.
+
+        Dual instances are not in the P/D scheduler's instance lists, so
+        we track load separately via registry active request counts rather
+        than delegating to the P/D scheduler path.
+        """
+        if self.registry is not None:
+            self.registry.decrement_active_requests(instance)
 
     def on_done(self,
                 prefill_instance: Optional[str] = None,
