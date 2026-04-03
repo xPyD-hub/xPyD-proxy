@@ -82,6 +82,10 @@ def _build_default_registry() -> PolicyRegistry:
     registry.register("power_of_two", PowerOfTwoPolicy)
     registry.register("cache_aware", CacheAwarePolicy)
 
+    # Aliases with underscores for config convenience
+    registry.register("round_robin", RoundRobinSchedulingPolicy)
+    registry.register("load_balanced", LoadBalancedScheduler)
+
     return registry
 
 

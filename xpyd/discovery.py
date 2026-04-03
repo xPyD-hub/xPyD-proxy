@@ -60,7 +60,7 @@ class NodeDiscovery:
     def is_ready(self) -> bool:
         """True when at least 1 prefill + 1 decode node are healthy, or at least 1 dual node is healthy."""
         has_pd = len(self.healthy_prefill) >= 1 and len(self.healthy_decode) >= 1
-        has_dual = len(getattr(self, 'healthy_dual', set())) >= 1
+        has_dual = len(self.healthy_dual) >= 1
         return has_pd or has_dual
 
     async def start(self):

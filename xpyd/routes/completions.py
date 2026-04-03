@@ -274,6 +274,19 @@ async def _handle_dual_completion(
         request_len=total_length,
         max_tokens=max_tokens,
     )
+
+    logger.info(
+        "Dual %s request",
+        handler_name,
+        extra={
+            "model": model,
+            "prompt_length": total_length,
+            "max_tokens": max_tokens,
+            "prompt": prompt_text[:200] if prompt_text else "",
+            "instance": instance,
+        },
+    )
+
     if instance is None:
         # Check for unknown model
         if model and server.registry is not None:

@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import sys
-import threading
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
 
@@ -169,7 +168,6 @@ class Proxy:
         self.dual_instances = dual_instances or {}
         self.model_schedulers = model_schedulers or {}
         self._dual_rr_counters: dict[str, int] = {}
-        self._dual_rr_lock = threading.Lock()
         self.custom_create_completion = custom_create_completion
         self.custom_create_chat_completion = custom_create_chat_completion
         self.router = APIRouter()
@@ -227,10 +225,11 @@ class Proxy:
         if strategy == "loadbalanced":
             selected = self._schedule_dual_load_balanced(available)
         else:
-            # Round-robin for 'roundrobin' and other strategies
-            with self._dual_rr_lock:
-                idx = self._dual_rr_counters.get(model, 0) % len(available)
-                self._dual_rr_counters[model] = idx + 1
+            # Round-robin for 'roundrobin' and other strategies.
+            # No lock needed: schedule_dual is called from async handlers
+            # in the single-threaded event loop; no concurrent mutation.
+            idx = self._dual_rr_counters.get(model, 0) % len(available)
+            self._dual_rr_counters[model] = idx + 1
             selected = available[idx]
 
         if self.registry is not None:
