@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
 
@@ -167,12 +168,8 @@ class Proxy:
         self.registry = registry
         self.dual_instances = dual_instances or {}
         self.model_schedulers = model_schedulers or {}
-        # Per-model dual cyclers for round-robin scheduling
-        self._dual_cyclers: dict[str, itertools.cycle] = {
-            m: itertools.cycle(addrs)
-            for m, addrs in self.dual_instances.items()
-        }
         self._dual_rr_counters: dict[str, int] = {}
+        self._dual_rr_lock = threading.Lock()
         self.custom_create_completion = custom_create_completion
         self.custom_create_chat_completion = custom_create_chat_completion
         self.router = APIRouter()
@@ -231,8 +228,9 @@ class Proxy:
             selected = self._schedule_dual_load_balanced(available)
         else:
             # Round-robin for 'roundrobin' and other strategies
-            idx = self._dual_rr_counters.get(model, 0) % len(available)
-            self._dual_rr_counters[model] = idx + 1
+            with self._dual_rr_lock:
+                idx = self._dual_rr_counters.get(model, 0) % len(available)
+                self._dual_rr_counters[model] = idx + 1
             selected = available[idx]
 
         if self.registry is not None:
@@ -645,17 +643,20 @@ class ProxyServer:
         # interprets the strategy at scheduling time.
         # Fallback chain: model-level → global → load_balanced (default).
         model_scheduler_config = getattr(config, '_model_schedulers', {})
-        # Validate scheduler names at startup
-        for model_name, strategy_name in model_scheduler_config.items():
-            if not default_registry.has(strategy_name):
-                logger.warning(
-                    "Unknown scheduler %r for model %r; available: %s. "
-                    "Will fall back to global policy at runtime.",
-                    strategy_name, model_name,
-                    default_registry.list_policies(),
-                )
-                # Remove invalid entries so they don't confuse schedule_dual
-                model_scheduler_config.pop(model_name, None)
+        # Validate scheduler names at startup; collect invalid ones first
+        invalid_models = [
+            model_name
+            for model_name, strategy_name in model_scheduler_config.items()
+            if not default_registry.has(strategy_name)
+        ]
+        for model_name in invalid_models:
+            logger.warning(
+                "Unknown scheduler %r for model %r; available: %s. "
+                "Will fall back to global policy at runtime.",
+                model_scheduler_config[model_name], model_name,
+                default_registry.list_policies(),
+            )
+            del model_scheduler_config[model_name]
 
         global_policy = _create_scheduling_policy(
             config, scheduling_policy, self.registry,
@@ -698,6 +699,7 @@ class ProxyServer:
             probe_interval=self.config.probe_interval_seconds,
             wait_timeout=self.config.wait_timeout_seconds,
             registry=self.registry,
+            dual_instances=self._all_dual,
         )
 
         app = FastAPI()

@@ -296,24 +296,25 @@ async def _handle_dual_completion(
         generator = server.forward_request(url, request)
 
         async def wrapped():
-            _failed = False
+            _ok = True
             try:
                 async for chunk in generator:
                     yield chunk
             except CancelledError:
+                _ok = False
                 logger.warning(
                     "Client disconnected during dual %s (CancelledError)",
                     handler_name,
                 )
             except Exception as e:
-                _failed = True
+                _ok = False
                 logger.error("Exception in dual stream: %s", str(e))
                 if server.registry is not None:
                     server.registry.record_failure(instance)
                 raise
             finally:
                 server.schedule_dual_completion(instance, req_len=total_length)
-                if not _failed and server.registry is not None:
+                if _ok and server.registry is not None:
                     server.registry.record_success(instance)
                 track_request_end(endpoint, metrics_start)
 
@@ -326,12 +327,23 @@ async def _handle_dual_completion(
             async for chunk in server.forward_request(url, request):
                 value += chunk
             data = json.loads(value)
-            # Detect error responses from upstream and map to appropriate
-            # status code. forward_request yields raw bytes without status
-            # info, so we inspect the parsed JSON.
+            # Detect error responses from upstream. forward_request yields
+            # raw bytes without HTTP status, so inspect the parsed JSON.
+            # OpenAI error format: {"error": {"message": ..., "type": ..., "code": ...}}
+            # where "code" can be null, a string like "invalid_api_key", or an int.
             if "error" in data:
-                status_code = data["error"].get("code") or 502
-                if isinstance(status_code, str):
+                err = data["error"]
+                err_type = err.get("type", "")
+                # Map error type to HTTP status code
+                if err_type == "invalid_request_error":
+                    status_code = 400
+                elif err_type == "authentication_error":
+                    status_code = 401
+                elif err_type == "not_found_error":
+                    status_code = 404
+                elif err_type == "rate_limit_error":
+                    status_code = 429
+                else:
                     status_code = 502
             else:
                 status_code = 200
