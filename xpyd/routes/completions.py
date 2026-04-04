@@ -18,7 +18,12 @@ from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
 if TYPE_CHECKING:
     from xpyd.proxy import Proxy
 
-from xpyd.metrics import track_request_end, track_request_start
+from xpyd.metrics import (
+    FirstTokenTracker,
+    record_pd_metrics,
+    track_request_end,
+    track_request_start,
+)
 
 logger = logging.getLogger("xpyd.proxy")
 
@@ -83,6 +88,7 @@ def build_kv_prepare_request(request: dict, is_chat: bool) -> dict:
 async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, is_chat: bool) -> JSONResponse | StreamingResponse:
     """Unified completion handler for both /v1/completions and /v1/chat/completions."""
     _metrics_start = track_request_start(endpoint)
+    t_request_start = time.monotonic()
     handler_name = "create_chat_completion" if is_chat else "create_completion"
     try:
         try:
@@ -190,6 +196,8 @@ async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, 
             server._record_failure(prefill_instance, decode_instance)
             raise http_exc
 
+        t_prefill_done = time.monotonic()
+
         value = (
             value.strip().decode("utf-8").removesuffix("data: [DONE]").encode("utf-8")
         )
@@ -202,9 +210,11 @@ async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, 
 
         generator_p = streaming_response(value)
         try:
-            generator_d = server.forward_request(
+            generator_d_raw = server.forward_request(
                 f"http://{decode_instance}{endpoint}", request
             )
+            decode_tracker = FirstTokenTracker(generator_d_raw)
+            generator_d = decode_tracker
         except HTTPException as http_exc:
             server.exception_handler(prefill_instance, decode_instance, total_length)
             server._record_failure(prefill_instance, decode_instance)
@@ -241,6 +251,15 @@ async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, 
                 logger.error("[1] Exception in wrapped_generator: %s", str(e))
                 raise
             finally:
+                if prefill_instance and decode_instance:
+                    record_pd_metrics(
+                        endpoint=endpoint,
+                        prefill_instance=prefill_instance,
+                        decode_instance=decode_instance,
+                        t_request_start=t_request_start,
+                        t_prefill_done=t_prefill_done,
+                        tracker=decode_tracker,
+                    )
                 track_request_end(endpoint, _metrics_start)
 
         return StreamingResponse(wrapped_generator(), media_type=media_type)
