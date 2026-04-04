@@ -224,6 +224,9 @@ async def handle_completion(endpoint: str, raw_request: Request, server: Proxy, 
                 instance=prefill_instance, error_type="prefill_forward_error",
                 model=model_label,
             ).inc()
+            proxy_prefill_active_requests.labels(
+                prefill_instance=prefill_instance, model=model_label,
+            ).dec()
             raise http_exc
 
         t_prefill_done = time.monotonic()
