@@ -60,35 +60,88 @@ def get_metrics() -> bytes:
 proxy_prefill_duration_seconds = Histogram(
     "proxy_prefill_duration_seconds",
     "Prefill node response time in seconds",
-    ["prefill_instance"],
+    ["prefill_instance", "model"],
     registry=REGISTRY,
 )
 
-proxy_kv_transfer_seconds = Histogram(
-    "proxy_kv_transfer_seconds",
+proxy_kv_transfer_duration_seconds = Histogram(
+    "proxy_kv_transfer_duration_seconds",
     "Estimated KV transfer time: T(decode_first_token) - T(prefill_response)",
-    ["prefill_instance", "decode_instance"],
+    ["prefill_instance", "decode_instance", "model"],
     registry=REGISTRY,
 )
 
 proxy_decode_duration_seconds = Histogram(
     "proxy_decode_duration_seconds",
     "Total decode phase duration in seconds",
-    ["decode_instance"],
+    ["decode_instance", "model"],
     registry=REGISTRY,
 )
 
 proxy_ttft_seconds = Histogram(
     "proxy_ttft_seconds",
     "End-to-end time to first token (user-perceived) in seconds",
-    ["endpoint"],
+    ["endpoint", "model"],
     registry=REGISTRY,
 )
 
 proxy_tpot_seconds = Histogram(
     "proxy_tpot_seconds",
     "Average time per output token (decode phase) in seconds",
-    ["endpoint"],
+    ["endpoint", "model"],
+    registry=REGISTRY,
+)
+
+proxy_e2e_latency_seconds = Histogram(
+    "proxy_e2e_latency_seconds",
+    "Total end-to-end request latency in seconds",
+    ["prefill_instance", "decode_instance", "model"],
+    registry=REGISTRY,
+)
+
+proxy_prefill_active_requests = Gauge(
+    "proxy_prefill_active_requests",
+    "Number of requests currently in prefill stage",
+    ["prefill_instance", "model"],
+    registry=REGISTRY,
+)
+
+proxy_decode_active_requests = Gauge(
+    "proxy_decode_active_requests",
+    "Number of requests currently in decode stage",
+    ["decode_instance", "model"],
+    registry=REGISTRY,
+)
+
+# NOTE: proxy_prefill_queue_depth tracks requests waiting for prefill.
+# Currently no explicit queueing exists in the proxy; this gauge is
+# initialised to 0 and should be incremented/decremented if a prefill
+# queue is added in the future.
+proxy_prefill_queue_depth = Gauge(
+    "proxy_prefill_queue_depth",
+    "Number of requests waiting for prefill (0 if no queueing exists)",
+    ["prefill_instance", "model"],
+    registry=REGISTRY,
+)
+
+proxy_prefill_requests_total = Counter(
+    "proxy_prefill_requests_total",
+    "Total number of requests routed to each prefill instance",
+    ["prefill_instance", "model"],
+    registry=REGISTRY,
+)
+
+proxy_decode_requests_total = Counter(
+    "proxy_decode_requests_total",
+    "Total number of requests routed to each decode instance",
+    ["decode_instance", "model"],
+    registry=REGISTRY,
+)
+
+proxy_instance_errors_total = Counter(
+    "proxy_instance_errors_total",
+    "Total number of errors per instance and error type",
+    ["instance", "error_type", "model"],
     registry=REGISTRY,
 )
 
@@ -123,35 +176,49 @@ def record_pd_metrics(
     endpoint: str,
     prefill_instance: str,
     decode_instance: str,
+    model: str,
     t_request_start: float,
     t_prefill_done: float,
     tracker: FirstTokenTracker,
 ) -> None:
     """Record PD disaggregation metrics after a request completes."""
+    # E2E latency
+    e2e = time.monotonic() - t_request_start
+    proxy_e2e_latency_seconds.labels(
+        prefill_instance=prefill_instance,
+        decode_instance=decode_instance,
+        model=model,
+    ).observe(e2e)
+
     # Prefill duration
     proxy_prefill_duration_seconds.labels(
         prefill_instance=prefill_instance,
+        model=model,
     ).observe(t_prefill_done - t_request_start)
 
     if tracker.first_token_time is not None:
         # KV transfer time
         kv_time = tracker.first_token_time - t_prefill_done
-        proxy_kv_transfer_seconds.labels(
+        proxy_kv_transfer_duration_seconds.labels(
             prefill_instance=prefill_instance,
             decode_instance=decode_instance,
+            model=model,
         ).observe(kv_time)
 
         # TTFT
         ttft = tracker.first_token_time - t_request_start
-        proxy_ttft_seconds.labels(endpoint=endpoint).observe(ttft)
+        proxy_ttft_seconds.labels(endpoint=endpoint, model=model).observe(ttft)
 
         # Decode duration and TPOT
         if tracker.last_token_time is not None and tracker.token_count > 0:
             decode_duration = tracker.last_token_time - tracker.first_token_time
             proxy_decode_duration_seconds.labels(
                 decode_instance=decode_instance,
+                model=model,
             ).observe(decode_duration)
 
             if tracker.token_count > 1:
                 tpot = decode_duration / (tracker.token_count - 1)
-                proxy_tpot_seconds.labels(endpoint=endpoint).observe(tpot)
+                proxy_tpot_seconds.labels(
+                    endpoint=endpoint, model=model,
+                ).observe(tpot)
