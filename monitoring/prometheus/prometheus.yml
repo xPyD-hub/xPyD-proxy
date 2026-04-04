@@ -1,0 +1,13 @@
+# Prometheus scrape configuration for xPyD-proxy
+# Adjust targets to match your deployment.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "xpyd-proxy"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["xpyd-proxy:8000"]
+        labels:
+          service: "xpyd-proxy"
