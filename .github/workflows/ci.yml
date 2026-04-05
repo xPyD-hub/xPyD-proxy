@@ -37,11 +37,16 @@ jobs:
       - run: pip install dist/*.whl
       - run: xpyd --help && xpyd --version
       - run: pip install pytest pytest-asyncio aiohttp requests xpyd-sim && python -m pytest tests/integration/test_cli_and_discovery.py -v --tb=short
-  benchmark:
+  integration-trigger:
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/stress/ -v --tb=short -m benchmark -s
+      - name: Trigger integration tests
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/xPyD-hub/xPyD-integration/dispatches \
+            -f event_type=dependency-updated \
+            -f "client_payload[repo]=xPyD-proxy" \
+            -f "client_payload[sha]=\${{ github.sha }}"
