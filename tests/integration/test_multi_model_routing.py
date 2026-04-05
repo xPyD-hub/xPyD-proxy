@@ -25,6 +25,8 @@ _TOKENIZER_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
 # ---------------------------------------------------------------------------
 
 
+pytestmark = pytest.mark.slow
+
 def _free_port():
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

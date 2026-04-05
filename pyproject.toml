@@ -40,4 +40,5 @@ include = ["xpyd*", "dummy_nodes*"]
 [tool.pytest.ini_options]
 markers = [
     "benchmark: end-to-end benchmark tests (high concurrency, large clusters)",
+    "slow: tests that start many server instances (skip with -m 'not slow')",
 ]

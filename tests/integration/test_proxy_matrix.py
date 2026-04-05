@@ -46,6 +46,8 @@ MATRIX = [
 _used_ports: set[int] = set()
 
 
+pytestmark = pytest.mark.slow
+
 def _free_port() -> int:
     """Find a free TCP port, avoiding previously allocated ports."""
     for _ in range(100):
