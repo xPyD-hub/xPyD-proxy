@@ -12,10 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
 from sim_adapter import make_sim_app
+from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
 
 prefill_app = make_sim_app(mode='prefill')
 decode_app = make_sim_app(mode='decode')
-from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

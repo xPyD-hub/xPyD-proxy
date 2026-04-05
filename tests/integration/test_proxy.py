@@ -15,10 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
 from sim_adapter import make_sim_app
+from xpyd.proxy import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 prefill_app = make_sim_app(mode='prefill')
 decode_app = make_sim_app(mode='decode')
-from xpyd.proxy import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 # ---------------------------------------------------------------------------
 # Use local tokenizer from repo to avoid network dependency in CI
