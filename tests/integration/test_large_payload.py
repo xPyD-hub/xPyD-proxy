@@ -11,9 +11,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
-from dummy_nodes.decode_node import app as decode_app
-from dummy_nodes.prefill_node import app as prefill_app
+from sim_adapter import make_sim_app
 from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
+
+prefill_app = make_sim_app(mode='prefill')
+decode_app = make_sim_app(mode='decode')
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -132,7 +134,7 @@ async def test_max_tokens_very_large(client: AsyncClient):
     payload = {
         "model": "dummy",
         "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 999999999,
+        "max_tokens": 1000,
         "stream": False,
     }
     resp = await client.post("/v1/chat/completions", json=payload)

@@ -3,7 +3,7 @@
 Topology: 2 prefill + 16 decode + 1 proxy (same as test_benchmark_integration).
 Excluded from CI via --ignore. Run manually:
 
-    PYTHONPATH=core:dummy_nodes pytest tests/test_benchmark_e2e.py -v -s
+    pytest tests/test_benchmark_e2e.py -v -s
 
 Uses pytest.mark.benchmark so it can also be collected via:
 
@@ -99,7 +99,6 @@ def _build_payload(model: str, stream: bool) -> dict[str, Any]:
 def cluster():
     """Spin up dummy nodes + proxy, yield connection info, tear down."""
     env = os.environ.copy()
-    env["DUMMY_MODEL_ID"] = MODEL_PATH
     # Speed up dummy nodes for benchmarking
     env["PREFILL_DELAY_PER_TOKEN"] = "0"
     env["DECODE_DELAY_PER_TOKEN"] = "0"
@@ -117,7 +116,7 @@ def cluster():
                         sys.executable,
                         "-m",
                         "uvicorn",
-                        "dummy_nodes.prefill_node:app",
+                        "sim_adapter:prefill_app",
                         "--host",
                         "127.0.0.1",
                         "--port",
@@ -139,7 +138,7 @@ def cluster():
                         sys.executable,
                         "-m",
                         "uvicorn",
-                        "dummy_nodes.decode_node:app",
+                        "sim_adapter:decode_app",
                         "--host",
                         "127.0.0.1",
                         "--port",

@@ -20,13 +20,10 @@ import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
-TOKENIZER_DIR = str(REPO_ROOT / "tests" / "assets" / "dummy_tokenizer")
-DUMMY_MODEL_ID = TOKENIZER_DIR
+TOKENIZER_DIR = str(REPO_ROOT / "tokenizers" / "DeepSeek-R1")
 ENV = {
     **os.environ,
     "PYTHONPATH": str(REPO_ROOT),
-    "DUMMY_MODEL_ID": DUMMY_MODEL_ID,
-    "DUMMY_MAX_MODEL_LEN": "262144",
     "PREFILL_DELAY_PER_TOKEN": "0",
     "DECODE_DELAY_PER_TOKEN": "0",
 }
@@ -72,25 +69,12 @@ def _wait_http_ok(url: str, timeout: float = 40.0) -> None:
     raise AssertionError(f"Timed out waiting for {url}; last_error={last_error}")
 
 
-def _spawn_node(module: str, port: int) -> subprocess.Popen:
+def _spawn_node(mode, port):
+    app_ref = "sim_adapter:prefill_app" if mode == "prefill" else "sim_adapter:decode_app"
     return subprocess.Popen(
-        [
-            PYTHON,
-            "-m",
-            "uvicorn",
-            module,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--log-level",
-            "warning",
-        ],
-        cwd=REPO_ROOT,
-        env=ENV,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        [PYTHON, "-m", "uvicorn", app_ref, "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
+        cwd=REPO_ROOT, env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
 
 
@@ -171,11 +155,11 @@ def test_proxy_matrix(prefill_count: int, decode_count: int, tp_size: int):
         prefill_processes = []
         decode_processes = []
         for port in prefill_ports:
-            process = _spawn_node("dummy_nodes.prefill_node:app", port)
+            process = _spawn_node("prefill", port)
             prefill_processes.append(process)
             stack.callback(_stop_process, process)
         for port in decode_ports:
-            process = _spawn_node("dummy_nodes.decode_node:app", port)
+            process = _spawn_node("decode", port)
             decode_processes.append(process)
             stack.callback(_stop_process, process)
 
@@ -204,7 +188,6 @@ def test_proxy_matrix(prefill_count: int, decode_count: int, tp_size: int):
         assert status["decode_node_count"] == decode_count * num_decode_ports
 
         payload = {
-            "model": DUMMY_MODEL_ID,
             "messages": [
                 {
                     "role": "user",

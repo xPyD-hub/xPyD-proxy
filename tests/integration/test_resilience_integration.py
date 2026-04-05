@@ -13,10 +13,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
-from dummy_nodes.decode_node import app as decode_app
-from dummy_nodes.prefill_node import app as prefill_app
+from sim_adapter import make_sim_app
 from xpyd.config import ProxyConfig
 from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
+
+prefill_app = make_sim_app(mode='prefill')
+decode_app = make_sim_app(mode='decode')
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TOKENIZER_PATH = str(_REPO_ROOT / "tokenizers" / "DeepSeek-R1")
