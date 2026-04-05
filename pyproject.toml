@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xpyd"
+name = "xpyd-proxy"
 version = "1.2.0"
 description = "Lightweight Prefill-Decode proxy for disaggregated LLM serving"
 readme = "README.md"
