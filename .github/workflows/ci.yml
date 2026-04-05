@@ -43,8 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger integration tests
+        # Requires a PAT (INTEGRATION_DISPATCH_TOKEN) with repo scope
+        # and write access to xPyD-hub/xPyD-integration for cross-repo dispatch.
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: \${{ secrets.INTEGRATION_DISPATCH_TOKEN }}
         run: |
           gh api repos/xPyD-hub/xPyD-integration/dispatches \
             -f event_type=dependency-updated \
