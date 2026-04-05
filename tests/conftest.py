@@ -11,11 +11,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
-from sim_adapter import decode_app, prefill_app
 from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TOKENIZER_PATH = os.path.join(_REPO_ROOT, "tokenizers", "DeepSeek-R1")
+
+# Ensure sim_adapter uses the correct model name before it's imported
+os.environ.setdefault("SIM_MODEL_NAME", _TOKENIZER_PATH)
+
+from sim_adapter import decode_app, prefill_app  # noqa: E402
 
 
 def _free_port():
@@ -41,7 +45,20 @@ threading.Thread(
 threading.Thread(
     target=_run_server, args=(decode_app, _DECODE_PORT), daemon=True
 ).start()
-time.sleep(2)
+
+# Wait for both servers to be ready
+import httpx as _httpx  # noqa: E402
+
+for _port in (_PREFILL_PORT, _DECODE_PORT):
+    for _ in range(50):
+        try:
+            _r = _httpx.get(f"http://127.0.0.1:{_port}/health", timeout=1)
+            if _r.status_code == 200:
+                break
+        except Exception:
+            time.sleep(0.2)
+    else:
+        raise RuntimeError(f"Server on port {_port} failed to start")
 
 
 def _make_proxy_app():
