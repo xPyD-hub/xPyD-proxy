@@ -62,7 +62,7 @@ async def test_prefill_streaming(prefill_client):
     resp = await prefill_client.post("/v1/chat/completions", json=payload)
     assert resp.status_code == 200
     lines = resp.text.strip().split("\n")
-    data_lines = [l for l in lines if l.startswith("data: ")]
+    data_lines = [line for line in lines if line.startswith("data: ")]
     assert data_lines[-1] == "data: [DONE]"
     first = json.loads(data_lines[0].removeprefix("data: "))
     assert first["choices"][0]["delta"]["role"] == "assistant"
@@ -108,7 +108,7 @@ async def test_decode_streaming(decode_client):
     resp = await decode_client.post("/v1/chat/completions", json=payload)
     assert resp.status_code == 200
     assert "data: [DONE]" in resp.text
-    first_data = [l for l in resp.text.split("\n") if l.startswith("data: ") and l != "data: [DONE]"][0]
+    first_data = [line for line in resp.text.split("\n") if line.startswith("data: ") and line != "data: [DONE]"][0]
     first = json.loads(first_data.removeprefix("data: "))
     assert first["choices"][0]["delta"]["role"] == "assistant"
 
@@ -124,8 +124,8 @@ async def test_decode_max_tokens(decode_client):
 async def test_decode_streaming_has_content(decode_client):
     payload = {**CHAT_PAYLOAD, "max_tokens": 7, "stream": True}
     resp = await decode_client.post("/v1/chat/completions", json=payload)
-    data_lines = [l for l in resp.text.strip().split("\n")
-                  if l.startswith("data: ") and l != "data: [DONE]"]
-    content_chunks = sum(1 for l in data_lines
-                        if json.loads(l.removeprefix("data: "))["choices"][0]["delta"].get("content"))
+    data_lines = [line for line in resp.text.strip().split("\n")
+                  if line.startswith("data: ") and line != "data: [DONE]"]
+    content_chunks = sum(1 for line in data_lines
+                        if json.loads(line.removeprefix("data: "))["choices"][0]["delta"].get("content"))
     assert content_chunks >= 1
