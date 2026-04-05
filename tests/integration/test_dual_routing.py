@@ -31,76 +31,9 @@ def _free_port():
 
 
 def _make_dummy_app(model_id: str):
-    """Create a minimal dummy node serving a given model_id."""
-    from dummy_nodes.common import (
-        ChatCompletionRequest,
-        ChatCompletionResponse,
-        Choice,
-        ChoiceMessage,
-        CompletionChoice,
-        CompletionRequest,
-        CompletionResponse,
-        ModelCard,
-        ModelListResponse,
-        UsageInfo,
-        count_prompt_tokens_from_messages,
-        count_prompt_tokens_from_prompt,
-        generate_id,
-        get_effective_max_tokens,
-        now_ts,
-        render_dummy_text,
-    )
+    from sim_adapter import make_sim_app
+    return make_sim_app(model_id)
 
-    app = FastAPI(title=f"Dummy Node ({model_id})")
-
-    @app.get("/v1/models")
-    async def models():
-        return ModelListResponse(
-            data=[ModelCard(id=model_id, created=now_ts(), max_model_len=131072)]
-        )
-
-    @app.get("/health")
-    async def health():
-        return "OK"
-
-    @app.post("/v1/chat/completions")
-    async def chat(request: ChatCompletionRequest):
-        prompt_tokens = count_prompt_tokens_from_messages(request.messages)
-        max_tokens = get_effective_max_tokens(
-            request.max_completion_tokens,
-            request.max_tokens,
-        )
-        text = render_dummy_text(max_tokens)
-        return ChatCompletionResponse(
-            id=generate_id(),
-            created=now_ts(),
-            model=model_id,
-            choices=[Choice(message=ChoiceMessage(content=text))],
-            usage=UsageInfo(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=len(text),
-                total_tokens=prompt_tokens + len(text),
-            ),
-        )
-
-    @app.post("/v1/completions")
-    async def completions(request: CompletionRequest):
-        prompt_tokens = count_prompt_tokens_from_prompt(request.prompt)
-        max_tokens = get_effective_max_tokens(request.max_tokens)
-        text = render_dummy_text(max_tokens)
-        return CompletionResponse(
-            id=generate_id("cmpl"),
-            created=now_ts(),
-            model=model_id,
-            choices=[CompletionChoice(text=text)],
-            usage=UsageInfo(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=len(text),
-                total_tokens=prompt_tokens + len(text),
-            ),
-        )
-
-    return app
 
 
 # ---------------------------------------------------------------------------

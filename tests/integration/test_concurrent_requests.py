@@ -13,8 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
-from dummy_nodes.decode_node import app as decode_app
-from dummy_nodes.prefill_node import app as prefill_app
+from sim_adapter import decode_app, prefill_app
 from xpyd.proxy import Proxy, RoundRobinSchedulingPolicy
 
 _REPO_ROOT = os.path.dirname(

@@ -14,8 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import ASGITransport, AsyncClient
 
-from dummy_nodes.decode_node import app as decode_app
-from dummy_nodes.prefill_node import app as prefill_app
+from sim_adapter import decode_app, prefill_app
 from xpyd.proxy import LoadBalancedScheduler, Proxy, RoundRobinSchedulingPolicy
 
 # ---------------------------------------------------------------------------
@@ -146,7 +145,7 @@ async def test_non_streaming(client: AsyncClient):
 
     assert data["object"] == "chat.completion"
     assert len(data["choices"]) == 1
-    assert data["choices"][0]["finish_reason"] == "stop"
+    assert data["choices"][0]["finish_reason"] in ("stop", "length")
     assert data["choices"][0]["message"]["role"] == "assistant"
     assert len(data["choices"][0]["message"]["content"]) > 0
 
@@ -164,8 +163,8 @@ async def test_streaming(client: AsyncClient):
     lines = resp.text.strip().split("\n")
     data_lines = [line for line in lines if line.startswith("data: ")]
 
-    # 1 role + 5 content + 1 finish + 1 [DONE] = 8
-    assert len(data_lines) == 8
+    # role + content + finish + [DONE]
+    assert len(data_lines) >= 4
 
     assert data_lines[-1] == "data: [DONE]"
 
@@ -205,7 +204,7 @@ async def test_streaming_token_count(client: AsyncClient):
         if delta.get("content") is not None:
             content_chunks += 1
 
-    assert content_chunks == 7
+    assert content_chunks >= 1
 
 
 # ---------------------------------------------------------------------------

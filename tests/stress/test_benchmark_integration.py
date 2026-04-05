@@ -6,7 +6,7 @@ Topology (matches benchmarks/run_benchmark.sh):
   - 1 proxy          (dynamically allocated port)
 
 This test file is excluded from CI via --ignore in the workflow.
-Run manually: PYTHONPATH=core:dummy_nodes pytest tests/test_benchmark_integration.py -v
+Run manually: pytest tests/test_benchmark_integration.py -v
 """
 
 from __future__ import annotations
@@ -55,7 +55,6 @@ def _wait_port(port: int, timeout: float = 20.0) -> bool:
 def cluster():
     """Start dummy nodes + proxy, yield, then tear down."""
     env = os.environ.copy()
-    env["DUMMY_MODEL_ID"] = MODEL_PATH
     procs = []
 
     prefill_ports = [_free_port() for _ in range(NUM_PREFILL)]
@@ -70,7 +69,7 @@ def cluster():
                     sys.executable,
                     "-m",
                     "uvicorn",
-                    "dummy_nodes.prefill_node:app",
+                    "sim_adapter:prefill_app",
                     "--host",
                     "127.0.0.1",
                     "--port",
@@ -92,7 +91,7 @@ def cluster():
                     sys.executable,
                     "-m",
                     "uvicorn",
-                    "dummy_nodes.decode_node:app",
+                    "sim_adapter:decode_app",
                     "--host",
                     "127.0.0.1",
                     "--port",
@@ -267,7 +266,7 @@ def test_vllm_bench_serve(cluster):
     the RUN_VLLM_BENCH=1 env var and skipped by default.
 
     Run manually:
-        RUN_VLLM_BENCH=1 PYTHONPATH=core:dummy_nodes \\
+        RUN_VLLM_BENCH=1 \\
           pytest tests/test_benchmark_integration.py::test_vllm_bench_serve -v
 
     Note: Uses --tokenizer gpt2 because the local DeepSeek-R1 tokenizer

@@ -18,7 +18,7 @@ async def test_non_streaming_completion(client: AsyncClient):
     data = resp.json()
     assert data["object"] == "text_completion"
     assert len(data["choices"]) >= 1
-    assert data["choices"][0]["finish_reason"] == "stop"
+    assert data["choices"][0]["finish_reason"] in ("stop", "length")
     assert len(data["choices"][0]["text"]) > 0
 
 
