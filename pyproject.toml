@@ -26,16 +26,18 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-timeout>=2.3.0",
     "ruff>=0.4.0",
     "isort>=5.13.0",
     "tiktoken>=0.7.0",
+    "xpyd-sim>=0.2.0",
 ]
 
 [project.scripts]
 xpyd = "xpyd.proxy:main"
 
 [tool.setuptools.packages.find]
-include = ["xpyd*", "dummy_nodes*"]
+include = ["xpyd*"]
 
 [tool.pytest.ini_options]
 markers = [
