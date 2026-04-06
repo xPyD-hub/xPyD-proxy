@@ -1,0 +1,77 @@
+# MicroPDProxy Configuration Example
+#
+# Usage:
+#   xpyd --config examples/proxy.yaml
+#   # or
+#   xpyd --config examples/proxy.yaml
+#
+# All fields shown with their defaults unless noted otherwise.
+
+# ============================================================
+# Server
+# ============================================================
+model: /path/to/model           # required — path to HF model or tokenizer
+port: 8868                      # proxy listen port (default: 8000)
+log_level: warning              # debug | info | warning | error
+
+# ============================================================
+# Nodes (topology style)
+# ============================================================
+# Each node entry is "ip:base_port".  The topology parameters
+# control how many vLLM instances run per node and how ports
+# are assigned.
+#
+# Topology math:
+#   instances_per_node = world_size_per_node / tp_size
+#   total_instances    = dp_size
+#   tp_size * dp_size  = len(nodes) * world_size_per_node
+
+prefill:
+  nodes:
+    - "10.0.0.1:8100"
+    - "10.0.0.2:8100"
+  tp_size: 8
+  dp_size: 2
+  world_size_per_node: 8
+  # Expands to:
+  #   10.0.0.1:8100  (1 instance per node, TP=8)
+  #   10.0.0.2:8100
+
+decode:
+  nodes:
+    - "10.0.0.3:8200"
+    - "10.0.0.4:8200"
+  tp_size: 1
+  dp_size: 16
+  world_size_per_node: 8
+  # Expands to 8 instances per node (TP=1, 8 GPUs each):
+  #   10.0.0.3:8200 .. 10.0.0.3:8207
+  #   10.0.0.4:8200 .. 10.0.0.4:8207
+
+# ============================================================
+# Scheduling
+# ============================================================
+scheduling: loadbalanced        # roundrobin | loadbalanced
+generator_on_p_node: false      # generate first token on prefill node
+
+# ============================================================
+# Auth (optional)
+# ============================================================
+# These can also be set via environment variables:
+#   ADMIN_API_KEY, OPENAI_API_KEY
+# Env vars take precedence over YAML values.
+admin_api_key: ""
+openai_api_key: ""
+
+# ============================================================
+# Startup Node Discovery (optional)
+# ============================================================
+# The proxy starts listening immediately but returns 503 on
+# business endpoints until at least 1 prefill + 1 decode node
+# respond healthy on /health.
+#
+# Set wait_timeout_seconds: 0 to skip discovery and accept
+# requests immediately (legacy behavior).
+startup:
+  wait_timeout_seconds: 600     # max wait for minimum nodes (default: 600s)
+  probe_interval_seconds: 10    # health probe interval (default: 10s)

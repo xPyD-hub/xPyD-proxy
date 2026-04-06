@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xpyd-proxy"
+version = "1.2.0"
+description = "Lightweight Prefill-Decode proxy for disaggregated LLM serving"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "uvloop>=0.19.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
+    "requests>=2.31.0",
+    "colorlog>=6.8.0",
+    "transformers>=4.38.0",
+    "prometheus-client>=0.20.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "isort>=5.13.0",
+    "tiktoken>=0.7.0",
+    "pytest-timeout>=2.3.0",
+    "xpyd-sim>=0.2.0",
+]
+
+[project.scripts]
+xpyd = "xpyd.proxy:main"
+
+[tool.setuptools.packages.find]
+include = ["xpyd*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "benchmark: end-to-end benchmark tests (high concurrency, large clusters)",
+]

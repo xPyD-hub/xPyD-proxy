@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Run vllm bench serve against dummy prefill/decode nodes + proxy
+#
+# Topology:
+#   - 2 prefill nodes (TP8, DP2)  — ports 8100-8101
+#   - 16 decode nodes (TP1, DP16) — ports 8200-8215
+#   - 1 proxy                     — port 8868
+#
+# Usage:
+#   bash benchmarks/run_benchmark.sh [--num-prompts N] [--request-rate R]
+#
+# Defaults: --num-prompts 100 --request-rate 3.6
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+MODEL="$REPO_ROOT/tokenizers/DeepSeek-R1"
+export DUMMY_MODEL_ID="$MODEL"
+
+NUM_PROMPTS=${NUM_PROMPTS:-100}
+REQUEST_RATE=${REQUEST_RATE:-3.6}
+PROXY_PORT=8868
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --num-prompts) NUM_PROMPTS="$2"; shift 2 ;;
+        --request-rate) REQUEST_RATE="$2"; shift 2 ;;
+        *) echo "Unknown arg: $1"; exit 1 ;;
+    esac
+done
+
+PIDS=()
+cleanup() {
+    echo "Cleaning up..."
+    for pid in "${PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+}
+trap cleanup EXIT
+
+wait_for_port() {
+    local port=$1
+    local timeout=${2:-30}
+    for i in $(seq 1 "$timeout"); do
+        curl -s "http://127.0.0.1:$port/health" > /dev/null 2>&1 && return 0
+        sleep 1
+    done
+    echo "ERROR: port $port not ready after ${timeout}s"
+    return 1
+}
+
+echo "Starting 2 prefill nodes..."
+for port in 8100 8101; do
+    python3 -m uvicorn dummy_nodes.prefill_node:app \
+        --host 127.0.0.1 --port "$port" --log-level error &
+    PIDS+=($!)
+done
+
+echo "Starting 16 decode nodes..."
+for port in $(seq 8200 8215); do
+    python3 -m uvicorn dummy_nodes.decode_node:app \
+        --host 127.0.0.1 --port "$port" --log-level error &
+    PIDS+=($!)
+done
+
+echo "Waiting for nodes..."
+for port in 8100 8101; do wait_for_port "$port"; done
+for port in $(seq 8200 8215); do wait_for_port "$port"; done
+echo "All nodes ready."
+
+echo "Starting proxy on port $PROXY_PORT..."
+PREFILL_ARGS="127.0.0.1:8100 127.0.0.1:8101"
+DECODE_ARGS=""
+for p in $(seq 8200 8215); do DECODE_ARGS="$DECODE_ARGS 127.0.0.1:$p"; done
+
+python3 core/MicroPDProxyServer.py \
+    --model "$MODEL" \
+    --prefill $PREFILL_ARGS \
+    --decode $DECODE_ARGS \
+    --port $PROXY_PORT &
+PIDS+=($!)
+
+wait_for_port "$PROXY_PORT" || exit 1
+
+echo "Proxy ready. Running benchmark..."
+echo "  num-prompts: $NUM_PROMPTS"
+echo "  request-rate: $REQUEST_RATE"
+
+# Use gpt2 tokenizer: the local DeepSeek-R1 tokenizer uses a custom class
+# (TokenizersBackend) that vllm cannot load. gpt2 is lightweight and
+# sufficient for random-data benchmarks.
+vllm bench serve \
+    --host 127.0.0.1 --port $PROXY_PORT \
+    --model "$MODEL" \
+    --tokenizer gpt2 \
+    --dataset-name random \
+    --random-input-len 3000 --random-output-len 200 \
+    --num-prompts "$NUM_PROMPTS" \
+    --burstiness 100 \
+    --request-rate "$REQUEST_RATE" \
+    --endpoint /v1/completions
+
+echo "Benchmark complete."

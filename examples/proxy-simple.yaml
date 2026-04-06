@@ -1,0 +1,16 @@
+# MicroPDProxy — Minimal flat-list config (backward compatible)
+#
+# If you don't need topology expansion, you can list instance
+# addresses directly.
+
+model: /path/to/model
+port: 8868
+
+prefill:
+  - "10.0.0.1:8100"
+
+decode:
+  - "10.0.0.2:8200"
+  - "10.0.0.3:8200"
+
+scheduling: loadbalanced
