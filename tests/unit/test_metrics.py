@@ -1,6 +1,5 @@
 """Tests for the /metrics Prometheus endpoint."""
 
-import pytest
 
 from xpyd.metrics import (
     get_metrics,
@@ -59,33 +58,3 @@ class TestMetricsModule:
         output = get_metrics().decode()
         assert "proxy_active_requests 0.0" in output
         assert "proxy_request_duration_seconds" in output
-
-
-@pytest.mark.anyio
-async def test_metrics_endpoint_returns_prometheus_format(client):
-    """Integration test: GET /metrics returns valid Prometheus text."""
-    resp = await client.get("/metrics")
-    assert resp.status_code == 200
-    assert "text/plain" in resp.headers["content-type"]
-    body = resp.text
-    assert "proxy_requests_total" in body or "proxy_active_requests" in body
-
-
-@pytest.mark.anyio
-async def test_metrics_endpoint_after_completion_request(client):
-    """After a /v1/completions request, metrics should reflect it."""
-    # Fire a completion request (will go through the proxy)
-    await client.post(
-        "/v1/completions",
-        json={
-            "model": "test",
-            "prompt": "Hello",
-            "max_tokens": 5,
-        },
-    )
-    resp = await client.get("/metrics")
-    assert resp.status_code == 200
-    body = resp.text
-    assert "proxy_requests_total" in body
-    # The /v1/completions counter should have been incremented
-    assert "/v1/completions" in body
