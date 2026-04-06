@@ -1,6 +1,8 @@
 name: Trigger Integration Tests
 
 on:
+  pull_request:
+    branches: [main]
   release:
     types: [published]
 
@@ -10,9 +12,16 @@ jobs:
     steps:
       - name: Trigger integration tests
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN }}
         run: |
-          gh api repos/xPyD-hub/xPyD-integration/dispatches \
-            -f event_type=release-check \
-            -f "client_payload[repo]=xPyD-proxy" \
-            -f "client_payload[version]=${{ github.event.release.tag_name }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh api repos/xPyD-hub/xPyD-integration/dispatches \
+              -f event_type=pr-check \
+              -f "client_payload[repo]=xPyD-proxy" \
+              -f "client_payload[ref]=${{ github.head_ref }}"
+          else
+            gh api repos/xPyD-hub/xPyD-integration/dispatches \
+              -f event_type=release-check \
+              -f "client_payload[repo]=xPyD-proxy" \
+              -f "client_payload[version]=${{ github.event.release.tag_name }}"
+          fi
