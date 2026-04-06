@@ -30,7 +30,6 @@ dev = [
     "isort>=5.13.0",
     "tiktoken>=0.7.0",
     "pytest-timeout>=2.3.0",
-    "xpyd-sim>=0.2.0",
 ]
 
 [project.scripts]
