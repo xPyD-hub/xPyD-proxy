@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xPyD — Our Plan B</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 720px;
+            width: 100%;
+        }
+        .title {
+            font-size: 2rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 0.5rem;
+            color: #f8fafc;
+        }
+        .subtitle {
+            text-align: center;
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-bottom: 3rem;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 16px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: #f59e0b;
+        }
+        .card-number {
+            display: inline-block;
+            background: #f59e0b;
+            color: #0f172a;
+            font-weight: 700;
+            width: 28px;
+            height: 28px;
+            line-height: 28px;
+            text-align: center;
+            border-radius: 50%;
+            font-size: 0.85rem;
+            margin-right: 12px;
+        }
+        .card-title {
+            display: inline;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        .card-desc {
+            margin-top: 10px;
+            color: #94a3b8;
+            font-size: 0.92rem;
+            line-height: 1.6;
+            padding-left: 40px;
+        }
+        .bottom {
+            margin-top: 3rem;
+            text-align: center;
+            border-top: 1px solid #334155;
+            padding-top: 2rem;
+        }
+        .cost {
+            font-size: 1rem;
+            color: #94a3b8;
+            margin-bottom: 0.5rem;
+        }
+        .cost strong { color: #34d399; }
+        .punchline {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #f59e0b;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">xPyD 不是 Dynamo 的平替<br>而是我们的 Plan B</h1>
+        <p class="subtitle">如果没有 Plan B ——</p>
+
+        <div class="card">
+            <span class="card-number">1</span>
+            <span class="card-title">被别人的节奏绑架</span>
+            <p class="card-desc">Dynamo 绑定 CUDA 生态，API 和协议的演进服务于 NVIDIA 的硬件销售节奏，不是我们的业务节奏。它改，我们只能跟。</p>
+        </div>
+
+        <div class="card">
+            <span class="card-number">2</span>
+            <span class="card-title">小事也要动大工程</span>
+            <p class="card-desc">验证一个调度策略、跑一个小规模 PD 分离，也得走 Dynamo 全套重链路。复杂度高，容易踩坑，试错成本以天计。</p>
+        </div>
+
+        <div class="card">
+            <span class="card-number">3</span>
+            <span class="card-title">出了 bug 修不动</span>
+            <p class="card-desc">Rust 编程门槛 + 不熟悉的代码库，排查一个问题的时间可能比从头写一个 proxy 还长。</p>
+        </div>
+
+        <div class="card">
+            <span class="card-number">4</span>
+            <span class="card-title">客户说不用 Dynamo，我们就没牌打</span>
+            <p class="card-desc">客户有自己的技术偏好、合规要求或供应商策略，一旦排除 Dynamo，我们当前零替代方案。</p>
+        </div>
+
+        <div class="card">
+            <span class="card-number">5</span>
+            <span class="card-title">与其依赖别人的 proxy，不如自己握一个</span>
+            <p class="card-desc">市面上其他方案同样有学习和适配成本，而 PD proxy 本身复杂度可控，自研反而是最稳妥、最可持续的选择。</p>
+        </div>
+
+        <div class="bottom">
+            <p class="cost">Plan B 的成本：<strong>1-2 人，纯 Python，已有成型方案</strong></p>
+            <p class="punchline">没有 Plan B 的代价：以上所有。</p>
+        </div>
+    </div>
+</body>
+</html>
