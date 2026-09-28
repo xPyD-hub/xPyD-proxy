@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from xpyd.resilience import ResilienceConfig
+from xpyd.scheduler.policy_registry import default_registry
 from xpyd.topology import expand_topology
 
 
@@ -514,12 +515,10 @@ class ProxyConfig(BaseModel):
         circuit_breaker_yaml = yaml_data.pop("circuit_breaker", None)
 
         # 2b. Pop strategy-specific config sections
-        _STRATEGY_NAMES = {
-            "consistent_hash",
-            "power_of_two",
-            "cache_aware",
-        }
-        scheduling_config: Dict[str, Any] = {}
+        _STRATEGY_NAMES = (
+            set(default_registry.list_policies()) - cls.model_fields.keys()
+        )
+        scheduling_config: Dict[str, Any] = dict(yaml_data.get("scheduling_config", {}))
         for strategy_name in _STRATEGY_NAMES:
             strategy_section = yaml_data.pop(strategy_name, None)
             if strategy_section is not None:
@@ -558,13 +557,7 @@ class ProxyConfig(BaseModel):
                 merged[field_name] = yaml_data[field_name]
 
         # 5. scheduling → roundrobin mapping + new policy support
-        _VALID_SCHEDULING = {
-            "roundrobin",
-            "loadbalanced",
-            "consistent_hash",
-            "power_of_two",
-            "cache_aware",
-        }
+        _VALID_SCHEDULING = default_registry.list_policies()
         if scheduling is not None:
             if scheduling not in _VALID_SCHEDULING:
                 raise ValueError(
@@ -680,20 +673,12 @@ class ProxyConfig(BaseModel):
             yaml_data["circuit_breaker"] = CircuitBreakerConfig(**circuit_breaker_raw)
 
         # Handle scheduling and strategy-specific config sections
-        _VALID_SCHEDULING = {
-            "roundrobin",
-            "loadbalanced",
-            "consistent_hash",
-            "power_of_two",
-            "cache_aware",
-        }
+        _VALID_SCHEDULING = default_registry.list_policies()
         scheduling = yaml_data.pop("scheduling", None)
-        _STRATEGY_NAMES = {
-            "consistent_hash",
-            "power_of_two",
-            "cache_aware",
-        }
-        scheduling_config: Dict[str, Any] = {}
+        _STRATEGY_NAMES = (
+            set(default_registry.list_policies()) - cls.model_fields.keys()
+        )
+        scheduling_config: Dict[str, Any] = dict(yaml_data.get("scheduling_config", {}))
         for strategy_name in _STRATEGY_NAMES:
             strategy_section = yaml_data.pop(strategy_name, None)
             if strategy_section is not None:

@@ -3,9 +3,9 @@
 
 import itertools
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 from xpyd.utils import query_instance_model_len
 
 logger = logging.getLogger("xpyd.proxy")
@@ -50,6 +50,47 @@ class LoadBalancedScheduler(SchedulingPolicy):
         logger.info("Decode instance model lens: %s", self.decode_model_len)
         super().__init__(registry=registry)
 
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        prefill_instances=(),
+        decode_instances=(),
+        workers=(),
+        registry=None,
+        tokenizer=None,
+        **options,
+    ):
+        return cls(prefill_instances, decode_instances, registry=registry, **options)
+
+    def select_node(
+        self, context: SchedulingContext, candidates: Sequence[Candidate]
+    ) -> Optional[str]:
+        if not candidates:
+            return None
+        if context.role == "aggregated":
+            return min(
+                candidates, key=lambda candidate: candidate.active_requests
+            ).address
+        available = {candidate.address for candidate in candidates}
+        with self.lock:
+            select = (
+                self._schedule_prefill
+                if context.role == "prefill"
+                else self._schedule_decode
+            )
+            return select(
+                context.request_len, context.max_tokens, context.model, available
+            )
+
+    def on_instance_added(self, role, address, max_model_len):
+        if role != "aggregated":
+            self.add_instance_state(role, max_model_len)
+
+    def on_instance_removed(self, role, address, index):
+        if role != "aggregated":
+            self.remove_instance_state(role, index)
+
     def add_instance_state(self, role: str, max_model_len: int) -> None:
         """Extend load-tracking arrays after a runtime instance is appended."""
         with self.lock:
@@ -89,9 +130,8 @@ class LoadBalancedScheduler(SchedulingPolicy):
             else:
                 return self._schedule_decode(request_len, max_tokens, model)
 
-    def _schedule_prefill(self, request_len, max_tokens, model=""):
-        available = None
-        if self._registry is not None:
+    def _schedule_prefill(self, request_len, max_tokens, model="", available=None):
+        if available is None and self._registry is not None:
             available = set(
                 self._registry.get_available_instances("prefill", model=model)
             )
@@ -126,9 +166,8 @@ class LoadBalancedScheduler(SchedulingPolicy):
         )
         return self.prefill_instances[min_index]
 
-    def _schedule_decode(self, request_len, max_tokens, model=""):
-        available = None
-        if self._registry is not None:
+    def _schedule_decode(self, request_len, max_tokens, model="", available=None):
+        if available is None and self._registry is not None:
             available = set(
                 self._registry.get_available_instances("decode", model=model)
             )

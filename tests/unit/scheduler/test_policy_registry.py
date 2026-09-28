@@ -14,7 +14,7 @@ class _DummyPolicy(SchedulingPolicy):
         super().__init__()
         self.kwargs = kwargs
 
-    def schedule(self, cycler, is_prompt=None, request_len=None, max_tokens=None):
+    def select_node(self, context, candidates):
         return None
 
 

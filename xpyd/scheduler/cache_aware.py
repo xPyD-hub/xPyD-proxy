@@ -14,9 +14,9 @@ import bisect
 import hashlib
 import itertools
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +190,34 @@ class CacheAwarePolicy(SchedulingPolicy):
     # ------------------------------------------------------------------
     # SchedulingPolicy interface
     # ------------------------------------------------------------------
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        prefill_instances=(),
+        decode_instances=(),
+        workers=(),
+        registry=None,
+        tokenizer=None,
+        **options,
+    ):
+        return cls(
+            workers=list(workers), registry=registry, tokenizer=tokenizer, **options
+        )
+
+    def select_node(
+        self, context: SchedulingContext, candidates: Sequence[Candidate]
+    ) -> Optional[str]:
+        return self.select_from(
+            {candidate.address for candidate in candidates}, prompt=context.prompt
+        )
+
+    def on_instance_added(self, role, address, max_model_len):
+        self.add_worker(address)
+
+    def on_instance_removed(self, role, address, index):
+        self.remove_worker(address)
 
     def select_from(
         self,

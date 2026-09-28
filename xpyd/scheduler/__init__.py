@@ -7,7 +7,8 @@ from xpyd.scheduler.load_balanced import LoadBalancedScheduler
 from xpyd.scheduler.policy_registry import PolicyRegistry, default_registry
 from xpyd.scheduler.power_of_two import PowerOfTwoPolicy
 from xpyd.scheduler.round_robin import RoundRobinSchedulingPolicy
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.runtime import Reservation, Scheduler
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 
 __all__ = [
     "SchedulingPolicy",
@@ -18,4 +19,8 @@ __all__ = [
     "CacheAwarePolicy",
     "PolicyRegistry",
     "default_registry",
+    "Candidate",
+    "SchedulingContext",
+    "Reservation",
+    "Scheduler",
 ]

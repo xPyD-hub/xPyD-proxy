@@ -4,9 +4,9 @@
 import itertools
 import logging
 import random
-from typing import Optional
+from typing import Optional, Sequence
 
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,27 @@ class PowerOfTwoPolicy(SchedulingPolicy):
     # ------------------------------------------------------------------
     # SchedulingPolicy interface
     # ------------------------------------------------------------------
+
+    def select_node(
+        self, context: SchedulingContext, candidates: Sequence[Candidate]
+    ) -> Optional[str]:
+        return self.select_from(
+            {candidate.address for candidate in candidates},
+            loads={
+                candidate.address: candidate.active_requests for candidate in candidates
+            },
+        )
+
+    def on_instance_added(self, role, address, max_model_len):
+        self.add_worker(address)
+
+    def on_instance_removed(self, role, address, index):
+        self.remove_worker(address)
+
+    def on_request_finished(self, context, address):
+        # The shared runtime owns counts for select_node(); select() retains its
+        # independent legacy accounting.
+        pass
 
     def schedule(
         self,

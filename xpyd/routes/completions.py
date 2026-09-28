@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
+from xpyd.scheduler import Reservation, SchedulingContext
 
 if TYPE_CHECKING:
     from xpyd.proxy import Proxy
@@ -53,17 +54,11 @@ class _RequestReservation:
 
     def __init__(
         self,
-        server: "Proxy",
-        prefill_instance: str | None,
-        decode_instance: str | None,
-        request_len: int,
+        prefill: Reservation | None = None,
+        decode: Reservation | None = None,
     ) -> None:
-        self._server = server
-        self._prefill_instance = prefill_instance
-        self._decode_instance = decode_instance
-        self._request_len = request_len
-        self._prefill_released = prefill_instance is None
-        self._decode_released = decode_instance is None
+        self.prefill = prefill
+        self.decode = decode
 
     def exception_handler(
         self,
@@ -71,24 +66,16 @@ class _RequestReservation:
         decode_instance: str | None = None,
         req_len: int | None = None,
     ) -> None:
-        release_prefill = prefill_instance is not None and not self._prefill_released
-        release_decode = decode_instance is not None and not self._decode_released
-        if not release_prefill and not release_decode:
-            return
-        self._prefill_released = self._prefill_released or release_prefill
-        self._decode_released = self._decode_released or release_decode
-        self._server.exception_handler(
-            prefill_instance=(self._prefill_instance if release_prefill else None),
-            decode_instance=self._decode_instance if release_decode else None,
-            req_len=self._request_len if req_len is None else req_len,
-        )
+        if prefill_instance is not None and self.prefill is not None:
+            self.prefill.release()
+        if decode_instance is not None and self.decode is not None:
+            self.decode.release()
 
     def release_all(self) -> None:
-        self.exception_handler(
-            prefill_instance=self._prefill_instance,
-            decode_instance=self._decode_instance,
-            req_len=self._request_len,
-        )
+        if self.prefill is not None:
+            self.prefill.release()
+        if self.decode is not None:
+            self.decode.release()
 
 
 # ---------------------------------------------------------------------------
@@ -626,27 +613,25 @@ async def handle_completion(
             "model": request.get("model", ""),
         }
 
-        prefill_instance = server.schedule(
-            server.prefill_cycler,
-            is_prompt=True,
-            request_len=total_length,
-            max_tokens=1,
-            **_sched_kwargs,
+        reservation = _RequestReservation()
+        reservation.prefill = server.reserve(
+            SchedulingContext(
+                role="prefill",
+                request_len=total_length,
+                max_tokens=1,
+                **_sched_kwargs,
+            )
         )
-
-        decode_instance = server.schedule(
-            server.decode_cycler,
-            is_prompt=False,
-            request_len=total_length,
-            max_tokens=max_tokens,
-            **_sched_kwargs,
+        reservation.decode = server.reserve(
+            SchedulingContext(
+                role="decode",
+                request_len=total_length,
+                max_tokens=max_tokens,
+                **_sched_kwargs,
+            )
         )
-        reservation = _RequestReservation(
-            server,
-            prefill_instance,
-            decode_instance,
-            total_length,
-        )
+        prefill_instance = reservation.prefill.address if reservation.prefill else None
+        decode_instance = reservation.decode.address if reservation.decode else None
 
         if prefill_instance is None or decode_instance is None:
             logger.warning(
@@ -733,6 +718,15 @@ async def handle_completion(
                 extra_headers=upstream_headers,
             ):
                 value += chunk
+        except CancelledError:
+            if zmq_wait_for_notification and zmq_request_id is not None:
+                await server.zmq_notifications.discard(zmq_request_id)
+            proxy_prefill_active_requests.labels(
+                prefill_instance=prefill_instance,
+                decode_instance=decode_instance,
+                model=model_label,
+            ).dec()
+            raise
         except HTTPException as http_exc:
             if zmq_wait_for_notification and zmq_request_id is not None:
                 await server.zmq_notifications.discard(zmq_request_id)
@@ -821,6 +815,9 @@ async def handle_completion(
                 max_tokens,
                 is_chat,
             )
+
+        if server.registry is not None:
+            server.registry.record_success(prefill_instance)
 
         async def streaming_response(value):
             if value:
@@ -922,6 +919,8 @@ async def handle_completion(
             try:
                 async for chunk in final_generator:
                     yield chunk
+                if server.registry is not None and not prefill_only:
+                    server.registry.record_success(decode_instance)
             except CancelledError:
                 logger.warning(
                     "[0]Client disconnected during %s (CancelledError)",
@@ -975,7 +974,7 @@ async def handle_completion(
                 track_request_end(endpoint, _metrics_start)
 
         return StreamingResponse(wrapped_generator(), media_type=media_type)
-    except HTTPException:
+    except (HTTPException, CancelledError):
         if reservation is not None:
             reservation.release_all()
         if decode_instance and prefill_instance and t_prefill_done is not None:
@@ -1016,16 +1015,20 @@ async def _handle_aggregated_completion(
     handler_name: str,
 ) -> JSONResponse | StreamingResponse:
     """Single-pass completion for aggregated-role instances."""
-    instance = server.schedule_aggregated(
-        model,
-        request_len=total_length,
-        max_tokens=max_tokens,
-        header=raw_request.headers.get("x-session-id"),
-        session_id=request.get("session_id"),
-        user=request.get("user"),
-        client_ip=(raw_request.client.host if raw_request.client else None),
-        prompt=prompt_text,
+    reservation = server.reserve(
+        SchedulingContext(
+            role="aggregated",
+            model=model,
+            request_len=total_length,
+            max_tokens=max_tokens,
+            header=raw_request.headers.get("x-session-id"),
+            session_id=request.get("session_id"),
+            user=request.get("user"),
+            client_ip=(raw_request.client.host if raw_request.client else None),
+            prompt=prompt_text,
+        )
     )
+    instance = reservation.address if reservation is not None else None
 
     logger.info(
         "Aggregated %s request",
@@ -1062,10 +1065,11 @@ async def _handle_aggregated_completion(
         generator = server.forward_request(url, request)
 
         async def wrapped():
-            _ok = True
+            _ok = False
             try:
                 async for chunk in generator:
                     yield chunk
+                _ok = True
             except CancelledError:
                 _ok = False
                 logger.warning(
@@ -1079,7 +1083,7 @@ async def _handle_aggregated_completion(
                     server.registry.record_failure(instance)
                 raise
             finally:
-                server.schedule_aggregated_completion(instance, req_len=total_length)
+                reservation.release()
                 if _ok and server.registry is not None:
                     server.registry.record_success(instance)
                 track_request_end(endpoint, metrics_start)
@@ -1113,10 +1117,7 @@ async def _handle_aggregated_completion(
                     status_code = 502
             else:
                 status_code = 200
-            server.schedule_aggregated_completion(
-                instance,
-                req_len=total_length,
-            )
+            reservation.release()
             if status_code < 400 and server.registry is not None:
                 server.registry.record_success(instance)
             elif status_code >= 400 and server.registry is not None:
@@ -1124,10 +1125,7 @@ async def _handle_aggregated_completion(
             track_request_end(endpoint, metrics_start)
             return JSONResponse(data, status_code=status_code)
         except HTTPException as http_exc:
-            server.schedule_aggregated_completion(
-                instance,
-                req_len=total_length,
-            )
+            reservation.release()
             if server.registry is not None:
                 server.registry.record_failure(instance)
             track_request_end(endpoint, metrics_start)
@@ -1136,12 +1134,12 @@ async def _handle_aggregated_completion(
                 PROXY_ERROR,
                 http_exc.status_code,
             )
+        except CancelledError:
+            reservation.release()
+            raise
         except Exception as e:
             logger.error("Error in aggregated non-streaming: %s", str(e))
-            server.schedule_aggregated_completion(
-                instance,
-                req_len=total_length,
-            )
+            reservation.release()
             if server.registry is not None:
                 server.registry.record_failure(instance)
             track_request_end(endpoint, metrics_start)

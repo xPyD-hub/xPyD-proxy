@@ -4,8 +4,6 @@
 # Standard
 import asyncio
 import itertools
-import threading
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third Party
@@ -14,27 +12,20 @@ import pytest
 # First Party
 from xpyd.proxy import Proxy
 from xpyd.registry import InstanceRegistry, InstanceStatus
-from xpyd.scheduler.load_balanced import LoadBalancedScheduler
+from xpyd.scheduler import LoadBalancedScheduler, RoundRobinSchedulingPolicy
 
 
-def _proxy(registry: InstanceRegistry) -> SimpleNamespace:
-    policy = MagicMock()
-    policy.lock = threading.Lock()
-    return SimpleNamespace(
-        registry=registry,
+def _proxy(registry: InstanceRegistry) -> Proxy:
+    proxy = Proxy(
         prefill_instances=["127.0.0.1:8100"],
         decode_instances=["127.0.0.1:8200", "127.0.0.1:8201"],
-        aggregated_instances={},
-        prefill_cycler=itertools.cycle(["127.0.0.1:8100"]),
-        decode_cycler=itertools.cycle(["127.0.0.1:8200", "127.0.0.1:8201"]),
-        scheduling_policy=policy,
-        _round_robin_policy=policy,
-        _round_robin_models=set(),
-        _aggregated_policies={},
-        _instance_mutation_lock=asyncio.Lock(),
-        health_monitor=MagicMock(),
-        discovery=MagicMock(),
+        model="test/model",
+        registry=registry,
+        scheduling_policy=RoundRobinSchedulingPolicy(registry=registry),
     )
+    proxy.health_monitor = MagicMock()
+    proxy.discovery = MagicMock()
+    return proxy
 
 
 @pytest.mark.asyncio
@@ -108,8 +99,6 @@ def test_pd_schedule_tracks_registry_active_requests() -> None:
     registry.add("prefill", "127.0.0.1:8100", model="test/model")
     registry.mark_healthy("127.0.0.1:8100")
     proxy = _proxy(registry)
-    proxy.scheduling_policy.schedule.return_value = "127.0.0.1:8100"
-
     selected = Proxy.schedule(
         proxy,
         proxy.prefill_cycler,

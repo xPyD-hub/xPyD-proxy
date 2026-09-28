@@ -63,6 +63,15 @@ class PolicyRegistry:
         """Return whether *name* is a registered policy."""
         return name in self._policies
 
+    def build(self, name: str, **kwargs: Any) -> SchedulingPolicy:
+        """Construct through the topology-independent policy factory."""
+        if name not in self._policies:
+            raise ValueError(
+                f"Unknown scheduling policy: {name!r}. "
+                f"Available: {self.list_policies()}"
+            )
+        return self._policies[name].from_config(**kwargs)
+
     def list_policies(self) -> list[str]:
         """Return a sorted list of registered policy names."""
         return sorted(self._policies)

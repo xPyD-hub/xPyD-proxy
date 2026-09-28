@@ -105,6 +105,11 @@ def test_pd_model_with_failed_tokenizer_uses_round_robin():
     registry.mark_healthy("10.0.0.2:8000")
     proxy = _proxy()
     proxy.registry = registry
+    proxy.prefill_instances = ["10.0.0.1:8000"]
+    proxy.decode_instances = ["10.0.0.2:8000"]
+    from xpyd.scheduler import Scheduler
+
+    proxy._scheduler = Scheduler(registry)
     proxy._round_robin_models.add("org/model")
     proxy._round_robin_policy = RoundRobinSchedulingPolicy(registry=registry)
     proxy.scheduling_policy = MagicMock()
@@ -124,8 +129,8 @@ def test_pd_model_with_failed_tokenizer_uses_round_robin():
     )
 
     assert selected == "10.0.0.1:8000"
-    proxy.scheduling_policy.schedule.assert_not_called()
-    proxy.scheduling_policy.schedule_completion.assert_not_called()
+    proxy.scheduling_policy.select_node.assert_not_called()
+    proxy.scheduling_policy.on_request_finished.assert_not_called()
 
 
 @pytest.mark.asyncio

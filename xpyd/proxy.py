@@ -21,7 +21,7 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional
 
 import aiohttp
 import uvicorn
@@ -36,12 +36,12 @@ from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_respon
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
 from xpyd.routes import register_routes
+from xpyd.scheduler import LoadBalancedScheduler as LoadBalancedScheduler
+from xpyd.scheduler import Reservation
+from xpyd.scheduler import RoundRobinSchedulingPolicy as RoundRobinSchedulingPolicy
 from xpyd.scheduler import (
-    CacheAwarePolicy,
-    ConsistentHashPolicy,
-    LoadBalancedScheduler,
-    PowerOfTwoPolicy,
-    RoundRobinSchedulingPolicy,
+    Scheduler,
+    SchedulingContext,
     SchedulingPolicy,
     default_registry,
 )
@@ -165,6 +165,8 @@ class Proxy:
         tokenizer_path: Optional[str] = None,
         disaggregated_mode: str = "direct",
         zmq_config=None,
+        scheduling_options: Optional[dict[str, Any]] = None,
+        model_policy_options: Optional[dict[str, dict[str, Any]]] = None,
     ):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
@@ -178,13 +180,17 @@ class Proxy:
         self.tokenizer_path = tokenizer_path
         self._tokenizers: dict[str, Any] = {}
         self._round_robin_models: set[str] = set()
-        self._round_robin_policy = RoundRobinSchedulingPolicy(registry=registry)
+        self._round_robin_policy = default_registry.build(
+            "roundrobin", registry=registry
+        )
         self.disaggregated_mode = disaggregated_mode
         self.first_token_source = first_token_source
         self.zmq_config = zmq_config
         self.zmq_notifications = None
-        self._aggregated_rr_counters: dict[str, int] = {}
         self._aggregated_policies: dict[str, SchedulingPolicy] = {}
+        self._scheduling_options = scheduling_options or {}
+        self._model_policy_options = model_policy_options or {}
+        self._scheduler = Scheduler(registry)
         self.custom_create_completion = custom_create_completion
         self.custom_create_chat_completion = custom_create_chat_completion
         self.health_monitor = None
@@ -284,152 +290,64 @@ class Proxy:
         return list(self.aggregated_instances.get(model, []))
 
     def schedule_aggregated(self, model: str, **kwargs) -> Optional[str]:
-        """Schedule a aggregated instance for the given model.
-
-        Scheduling strategy follows the per-model fallback chain:
-        model-level scheduler → global scheduling_policy → round-robin.
-
-        Supports load-balanced, round-robin, consistent-hash, power-of-two,
-        and cache-aware selection.
-        """
-        instances = Proxy._aggregated_instances_for_model(self, model)
-        if not instances:
-            return None
-
-        # Determine available instances
-        if self.registry is not None:
-            available = self.registry.get_aggregated_instances(model=model)
-            if not available:
-                return None
-        else:
-            available = list(instances)
-
-        # Determine scheduler strategy for this model
-        # Fallback chain: model-level → global policy type → load_balanced
-        strategy = (
-            "roundrobin"
-            if Proxy.uses_round_robin_fallback(self, model)
-            else self.model_schedulers.get(model, "")
+        """Compatibility wrapper for the address-returning scheduling API."""
+        return self._scheduler.remember(
+            self.reserve(SchedulingContext(role="aggregated", model=model, **kwargs))
         )
-        strategy = {
-            "load_balanced": "loadbalanced",
-            "round_robin": "roundrobin",
-        }.get(strategy, strategy)
-
-        if not strategy:
-            # Fall back to global policy type
-            if isinstance(self.scheduling_policy, LoadBalancedScheduler):
-                strategy = "loadbalanced"
-            elif isinstance(self.scheduling_policy, RoundRobinSchedulingPolicy):
-                strategy = "roundrobin"
-            elif isinstance(self.scheduling_policy, ConsistentHashPolicy):
-                strategy = "consistent_hash"
-            elif isinstance(self.scheduling_policy, PowerOfTwoPolicy):
-                strategy = "power_of_two"
-            elif isinstance(self.scheduling_policy, CacheAwarePolicy):
-                strategy = "cache_aware"
-            else:
-                # Default fallback: load_balanced
-                strategy = "loadbalanced"
-
-        # Load-balanced: pick instance with lowest active requests
-        if strategy == "loadbalanced":
-            selected = self._schedule_aggregated_load_balanced(available)
-        elif strategy == "consistent_hash":
-            policy = cast(
-                ConsistentHashPolicy,
-                self._get_aggregated_policy(model, strategy, instances),
-            )
-            selected = policy.select_from(
-                set(available),
-                header=kwargs.get("header"),
-                session_id=kwargs.get("session_id"),
-                user=kwargs.get("user"),
-                client_ip=kwargs.get("client_ip"),
-            )
-        elif strategy == "power_of_two":
-            policy = cast(
-                PowerOfTwoPolicy,
-                self._get_aggregated_policy(model, strategy, instances),
-            )
-            loads = (
-                {
-                    instance: self.registry.get_active_requests(instance)
-                    for instance in available
-                }
-                if self.registry is not None
-                else None
-            )
-            selected = policy.select_from(set(available), loads=loads)
-        elif strategy == "cache_aware":
-            policy = cast(
-                CacheAwarePolicy,
-                self._get_aggregated_policy(model, strategy, instances),
-            )
-            selected = policy.select_from(
-                set(available),
-                prompt=kwargs.get("prompt"),
-            )
-        else:
-            # No lock needed: schedule_aggregated is called from async handlers
-            # in the single-threaded event loop; no concurrent mutation.
-            idx = self._aggregated_rr_counters.get(model, 0) % len(available)
-            self._aggregated_rr_counters[model] = idx + 1
-            selected = available[idx]
-
-        if selected is None:
-            return None
-        if self.registry is not None:
-            self.registry.increment_active_requests(selected)
-        return selected
 
     def _get_aggregated_policy(
         self,
         model: str,
-        strategy: str,
         instances: list[str],
     ) -> SchedulingPolicy:
-        """Return the cached advanced scheduling policy for a aggregated model."""
+        """Build a model policy through the same interface as the global policy."""
         policy = self._aggregated_policies.get(model)
         if policy is not None:
             return policy
 
+        strategy = self.model_schedulers.get(model)
         options: dict[str, Any] = {
             "workers": instances,
             "registry": self.registry,
+            "tokenizer": self.get_tokenizer(model),
         }
-        if strategy == "cache_aware":
-            options["tokenizer"] = Proxy.get_tokenizer(self, model)
-        policy = default_registry.create(strategy, **options)
+        if strategy:
+            policy = default_registry.build(
+                strategy, **options, **self._model_policy_options.get(strategy, {})
+            )
+        else:
+            policy = type(self.scheduling_policy).from_config(
+                **options, **self._scheduling_options
+            )
         self._aggregated_policies[model] = policy
         return policy
 
-    def _schedule_aggregated_load_balanced(self, available: list[str]) -> str:
-        """Pick the aggregated instance with the lowest active request count."""
-        if self.registry is None or len(available) == 1:
-            return available[0]
-        best = available[0]
-        best_load = self.registry.get_active_requests(best)
-        for addr in available[1:]:
-            load = self.registry.get_active_requests(addr)
-            if load < best_load:
-                best = addr
-                best_load = load
-        return best
+    def reserve(self, context: SchedulingContext) -> Optional[Reservation]:
+        """Acquire a node without depending on a concrete scheduling strategy."""
+        with self._scheduler.lock:
+            if context.role == "aggregated":
+                instances = self._aggregated_instances_for_model(context.model)
+                if not instances:
+                    return None
+                policy = self._get_aggregated_policy(context.model, instances)
+            else:
+                instances = (
+                    self.prefill_instances
+                    if context.role == "prefill"
+                    else self.decode_instances
+                )
+                policy = self.scheduling_policy
+            if self.uses_round_robin_fallback(context.model):
+                policy = self._round_robin_policy
+            return self._scheduler.reserve(policy, context, instances)
 
     def schedule_aggregated_completion(
         self,
         instance: str,
         req_len: Optional[int] = None,
     ) -> None:
-        """Load accounting for aggregated instance completion.
-
-        Aggregated instances are not in the disaggregated scheduler's instance lists, so
-        we track load separately via registry active request counts rather
-        than delegating to the disaggregated scheduler path.
-        """
-        if self.registry is not None:
-            self.registry.decrement_active_requests(instance)
+        """Release a reservation made by the legacy address-returning API."""
+        self._scheduler.finish("aggregated", instance, req_len or 0)
 
     def on_done(
         self,
@@ -513,23 +431,16 @@ class Proxy:
         max_tokens: Optional[int] = None,
         **kwargs,
     ) -> Optional[str]:
-        model = kwargs.pop("model", "")
-        policy = (
-            self._round_robin_policy
-            if Proxy.uses_round_robin_fallback(self, model)
-            else self.scheduling_policy
+        return self._scheduler.remember(
+            self.reserve(
+                SchedulingContext(
+                    role="prefill" if is_prompt else "decode",
+                    request_len=request_len or 0,
+                    max_tokens=max_tokens or 0,
+                    **kwargs,
+                )
+            )
         )
-        selected = policy.schedule(
-            cycler,
-            is_prompt,
-            request_len,
-            max_tokens,
-            model=model,
-            **kwargs,
-        )
-        if selected is not None and self.registry is not None:
-            self.registry.increment_active_requests(selected)
-        return selected
 
     def schedule_completion(
         self,
@@ -537,28 +448,10 @@ class Proxy:
         decode_instance: Optional[str] = None,
         req_len: Optional[int] = None,
     ) -> None:
-        instances = [
-            instance for instance in (prefill_instance, decode_instance) if instance
-        ]
-        if self.registry is not None:
-            for instance in instances:
-                self.registry.decrement_active_requests(instance)
-        if (
-            self.registry is not None
-            and instances
-            and all(
-                Proxy.uses_round_robin_fallback(
-                    self, self.registry.get_instance_info(instance).model
-                )
-                for instance in instances
-            )
-        ):
-            return
-        self.scheduling_policy.schedule_completion(
-            prefill_instance=prefill_instance,
-            decode_instance=decode_instance,
-            req_len=req_len,
-        )
+        if prefill_instance:
+            self._scheduler.finish("prefill", prefill_instance, req_len or 0)
+        if decode_instance:
+            self._scheduler.finish("decode", decode_instance, req_len or 0)
 
     async def drain_and_remove_instance(
         self,
@@ -572,7 +465,8 @@ class Proxy:
 
         async with self._instance_mutation_lock:
             info = self.registry.get_instance_info(address)
-            self.registry.begin_draining(role, address)
+            with self._scheduler.lock:
+                self.registry.begin_draining(role, address)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             while self.registry.get_active_requests(address) > 0:
                 remaining = deadline - asyncio.get_running_loop().time()
@@ -583,60 +477,38 @@ class Proxy:
                     )
                 await asyncio.sleep(min(0.05, remaining))
 
-            if role == "aggregated":
-                instances = self.aggregated_instances.get(info.model, [])
-                policy = self._aggregated_policies.get(info.model)
-                if isinstance(
-                    policy,
-                    (ConsistentHashPolicy, CacheAwarePolicy, PowerOfTwoPolicy),
-                ):
-                    policy.remove_worker(address)
-                if address in instances:
-                    instances.remove(address)
-                if not instances:
-                    self.aggregated_instances.pop(info.model, None)
-            else:
-                instances = (
-                    self.prefill_instances
-                    if role == "prefill"
-                    else self.decode_instances
-                )
-                index = instances.index(address)
-                Proxy._remove_instance_from_policy(self, role, address, index)
-                with self.scheduling_policy.lock:
+            with self._scheduler.lock:
+                if role == "aggregated":
+                    instances = self._aggregated_instances_for_model(info.model)
+                    policy = self._aggregated_policies.get(info.model)
+                    if policy is not None:
+                        policy.on_instance_removed(
+                            role, address, instances.index(address)
+                        )
+                    for model, pool in list(self.aggregated_instances.items()):
+                        if address in pool:
+                            pool.remove(address)
+                            if not pool:
+                                del self.aggregated_instances[model]
+                else:
+                    instances = (
+                        self.prefill_instances
+                        if role == "prefill"
+                        else self.decode_instances
+                    )
+                    index = instances.index(address)
+                    self.scheduling_policy.on_instance_removed(role, address, index)
                     instances.remove(address)
                     if role == "prefill":
                         self.prefill_cycler = itertools.cycle(self.prefill_instances)
                     else:
                         self.decode_cycler = itertools.cycle(self.decode_instances)
 
-            if self.health_monitor is not None:
-                self.health_monitor.remove_node(address)
-            if self.discovery is not None:
-                self.discovery.remove_instance(role, address)
-            self.registry.remove(address)
-
-    def _add_instance_to_policy(
-        self, role: str, address: str, max_model_len: int
-    ) -> None:
-        policy = self.scheduling_policy
-        if isinstance(policy, LoadBalancedScheduler):
-            policy.add_instance_state(role, max_model_len)
-        elif isinstance(
-            policy,
-            (ConsistentHashPolicy, CacheAwarePolicy, PowerOfTwoPolicy),
-        ):
-            policy.add_worker(address)
-
-    def _remove_instance_from_policy(self, role: str, address: str, index: int) -> None:
-        policy = self.scheduling_policy
-        if isinstance(policy, LoadBalancedScheduler):
-            policy.remove_instance_state(role, index)
-        elif isinstance(
-            policy,
-            (ConsistentHashPolicy, CacheAwarePolicy, PowerOfTwoPolicy),
-        ):
-            policy.remove_worker(address)
+                if self.health_monitor is not None:
+                    self.health_monitor.remove_node(address)
+                if self.discovery is not None:
+                    self.discovery.remove_instance(role, address)
+                self.registry.remove(address)
 
     async def add_instance(self, role: str, address: str) -> bool:
         """Validate and atomically register a runtime backend instance."""
@@ -648,72 +520,69 @@ class Proxy:
         model, max_model_len = details
 
         async with self._instance_mutation_lock:
-            try:
-                self.registry.get_instance_info(address)
-            except KeyError:
-                pass
-            else:
-                raise ValueError("Instance already exists")
-
-            if role == "aggregated":
-                instances = self.aggregated_instances.setdefault(model, [])
-            else:
-                instances = (
-                    self.prefill_instances
-                    if role == "prefill"
-                    else self.decode_instances
+            with self._scheduler.lock:
+                return self._register_validated_instance(
+                    role, address, model, max_model_len
                 )
-            self.registry.add(role, address, model=model)
-            self.registry.mark_healthy(address)
-            index = len(instances)
-            policy_added = False
-            try:
-                if role == "aggregated":
-                    policy = self._aggregated_policies.get(model)
-                    if isinstance(
-                        policy,
-                        (ConsistentHashPolicy, CacheAwarePolicy, PowerOfTwoPolicy),
-                    ):
-                        policy.add_worker(address)
-                        policy_added = True
-                else:
-                    Proxy._add_instance_to_policy(self, role, address, max_model_len)
-                    policy_added = True
-                if role == "aggregated":
-                    instances.append(address)
-                else:
-                    with self.scheduling_policy.lock:
-                        instances.append(address)
-                        if role == "prefill":
-                            self.prefill_cycler = itertools.cycle(
-                                self.prefill_instances
-                            )
-                        else:
-                            self.decode_cycler = itertools.cycle(self.decode_instances)
-                if self.health_monitor is not None:
-                    self.health_monitor.add_node(address)
-                if self.discovery is not None:
-                    self.discovery.add_instance(role, address)
-            except Exception:
-                if self.discovery is not None:
-                    self.discovery.remove_instance(role, address)
-                if self.health_monitor is not None:
-                    self.health_monitor.remove_node(address)
-                if address in instances:
-                    instances.remove(address)
-                if role == "prefill":
-                    self.prefill_cycler = itertools.cycle(self.prefill_instances)
-                elif role == "decode":
-                    self.decode_cycler = itertools.cycle(self.decode_instances)
-                if policy_added:
-                    if role == "aggregated":
-                        policy.remove_worker(address)
-                    else:
-                        Proxy._remove_instance_from_policy(self, role, address, index)
-                if role == "aggregated" and not instances:
-                    self.aggregated_instances.pop(model, None)
-                self.registry.remove(address)
-                raise
+
+    def _register_validated_instance(
+        self, role: str, address: str, model: str, max_model_len: int
+    ) -> bool:
+        """Commit membership changes while selection and draining are excluded."""
+        if self.registry is None:
+            raise RuntimeError("Instance registry is unavailable.")
+        try:
+            self.registry.get_instance_info(address)
+        except KeyError:
+            pass
+        else:
+            raise ValueError("Instance already exists")
+
+        if role == "aggregated":
+            instances = self.aggregated_instances.setdefault(model, [])
+        else:
+            instances = (
+                self.prefill_instances if role == "prefill" else self.decode_instances
+            )
+        self.registry.add(role, address, model=model)
+        self.registry.mark_healthy(address)
+        index = len(instances)
+        policy = (
+            self._aggregated_policies.get(model)
+            if role == "aggregated"
+            else self.scheduling_policy
+        )
+        policy_added = False
+        try:
+            if policy is not None:
+                policy.on_instance_added(role, address, max_model_len)
+                policy_added = True
+            instances.append(address)
+            if role == "prefill":
+                self.prefill_cycler = itertools.cycle(self.prefill_instances)
+            elif role == "decode":
+                self.decode_cycler = itertools.cycle(self.decode_instances)
+            if self.health_monitor is not None:
+                self.health_monitor.add_node(address)
+            if self.discovery is not None:
+                self.discovery.add_instance(role, address)
+        except Exception:
+            if self.discovery is not None:
+                self.discovery.remove_instance(role, address)
+            if self.health_monitor is not None:
+                self.health_monitor.remove_node(address)
+            if policy_added and policy is not None:
+                policy.on_instance_removed(role, address, index)
+            if address in instances:
+                instances.remove(address)
+            if role == "prefill":
+                self.prefill_cycler = itertools.cycle(self.prefill_instances)
+            elif role == "decode":
+                self.decode_cycler = itertools.cycle(self.decode_instances)
+            if role == "aggregated" and not instances:
+                self.aggregated_instances.pop(model, None)
+            self.registry.remove(address)
+            raise
         return True
 
     def get_total_token_length(self, prompt: Any, model: str = "") -> int:
@@ -1024,38 +893,24 @@ def _create_scheduling_policy(
 
     # Legacy explicit-class path (used by existing tests and CLI --roundrobin)
     if scheduling_policy_cls is not None:
-        return scheduling_policy_cls(
-            prefill,
-            decode,
+        return scheduling_policy_cls.from_config(
+            prefill_instances=prefill,
+            decode_instances=decode,
+            workers=list(prefill) + list(decode),
             registry=registry,
         )
 
     strategy = config.scheduling
     strategy_opts = config.scheduling_config.get(strategy, {})
 
-    # Strategies that accept the legacy (prefill, decode) constructor
-    if strategy == "loadbalanced":
-        return LoadBalancedScheduler(
-            prefill,
-            decode,
-            registry=registry,
-        )
-    if strategy == "roundrobin":
-        return RoundRobinSchedulingPolicy(registry=registry)
-
-    # Registry-based advanced strategies (all workers for role-aware routing)
-    if default_registry.has(strategy):
-        policy = default_registry.create(
-            strategy,
-            workers=list(prefill) + list(decode),
-            registry=registry,
-            **strategy_opts,
-        )
-        return policy
-
-    # Fallback: try registry anyway
-    policy = default_registry.create(strategy, registry=registry, **strategy_opts)
-    return policy
+    return default_registry.build(
+        strategy,
+        prefill_instances=prefill,
+        decode_instances=decode,
+        workers=list(prefill) + list(decode),
+        registry=registry,
+        **strategy_opts,
+    )
 
 
 class ProxyServer:
@@ -1216,6 +1071,8 @@ class ProxyServer:
             tokenizer_path=config.tokenizer_path,
             disaggregated_mode=config.disaggregated_mode,
             zmq_config=config.zmq,
+            scheduling_options=config.scheduling_config.get(config.scheduling, {}),
+            model_policy_options=config.scheduling_config,
         )
 
     def run_server(self) -> None:

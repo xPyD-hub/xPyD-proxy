@@ -5,9 +5,9 @@ import hashlib
 import itertools
 import logging
 from bisect import bisect_left, bisect_right, insort
-from typing import Optional
+from typing import Optional, Sequence
 
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,23 @@ class ConsistentHashPolicy(SchedulingPolicy):
     # ------------------------------------------------------------------
     # SchedulingPolicy interface (for integration with existing router)
     # ------------------------------------------------------------------
+
+    def select_node(
+        self, context: SchedulingContext, candidates: Sequence[Candidate]
+    ) -> Optional[str]:
+        return self.select_from(
+            {candidate.address for candidate in candidates},
+            header=context.header,
+            session_id=context.session_id,
+            user=context.user,
+            client_ip=context.client_ip,
+        )
+
+    def on_instance_added(self, role, address, max_model_len):
+        self.add_worker(address)
+
+    def on_instance_removed(self, role, address, index):
+        self.remove_worker(address)
 
     def select_from(
         self,
