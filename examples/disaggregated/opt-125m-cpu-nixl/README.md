@@ -53,8 +53,12 @@ topologies, while 1P1D correctly returns 503 after its only decode is removed.
 This is what proves passthrough requests reach a backend in disaggregated mode
 rather than failing to select one.
 OPT-125M is a generative model, so the pooling and scoring families are answered
-with a 4xx by vLLM itself; the checks assert those requests are *forwarded* (any
-non-5xx status) instead of asserting a payload. While the topology is
+with a 4xx by vLLM itself; the checks require both a non-5xx response and a **new**
+matching POST entry in the backend access logs. Proxy-generated 404/400
+responses without backend activity fail. Run smoke tests without unrelated
+concurrent traffic; standalone invocations can set `BACKEND_LOG_DIR` (default:
+the example's `logs/`) and require vLLM access logging to remain enabled.
+While the topology is
 incomplete, the passthrough endpoints and `/health` are asserted to answer 503.
 `run_all.sh` and `run_topology.sh` export a throwaway `ADMIN_API_KEY` so the
 admin endpoint can be exercised on a loopback-only proxy.
