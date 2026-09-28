@@ -10,11 +10,11 @@ from xpyd.scheduler.scheduler_base import SchedulingPolicy
 class _DummyPolicy(SchedulingPolicy):
     """Minimal concrete policy for testing."""
 
-    def __init__(self, **kwargs):
-        super().__init__()
+    def __init__(self, workers=None, registry=None, **kwargs):
+        super().__init__(registry=registry, workers=workers)
         self.kwargs = kwargs
 
-    def schedule(self, cycler, is_prompt=None, request_len=None, max_tokens=None):
+    def select_node(self, context, candidates):
         return None
 
 
@@ -27,7 +27,7 @@ class TestPolicyRegistry:
         reg.register("dummy", _DummyPolicy)
 
         assert reg.has("dummy")
-        instance = reg.create("dummy", foo="bar")
+        instance = reg.build("dummy", foo="bar")
         assert isinstance(instance, _DummyPolicy)
         assert instance.kwargs == {"foo": "bar"}
 
@@ -35,7 +35,7 @@ class TestPolicyRegistry:
         """Creating an unregistered policy raises ValueError."""
         reg = PolicyRegistry()
         with pytest.raises(ValueError, match="Unknown scheduling policy"):
-            reg.create("nonexistent")
+            reg.build("nonexistent")
 
     def test_builtin_policies_registered(self):
         """The default registry ships with roundrobin and loadbalanced."""
@@ -76,18 +76,18 @@ class TestPolicyRegistry:
             reg.register("dup", _DummyPolicy)
         assert "Overwriting existing policy" in caplog.text
 
-    def test_create_returns_correct_type(self):
-        """create() returns an instance of the registered class."""
+    def test_build_returns_correct_type(self):
+        """build() returns an instance of the registered class."""
         from unittest.mock import patch
 
-        rr = default_registry.create("roundrobin")
+        rr = default_registry.build("roundrobin")
         assert isinstance(rr, SchedulingPolicy)
 
         with patch(
             "xpyd.scheduler.load_balanced.query_instance_model_len",
             return_value=[131072],
         ):
-            lb = default_registry.create(
+            lb = default_registry.build(
                 "loadbalanced",
                 prefill_instances=["p1"],
                 decode_instances=["d1"],

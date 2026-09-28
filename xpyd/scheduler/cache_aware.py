@@ -7,16 +7,15 @@ optimizing for prefix cache hits on inference backends.
 Uses a consistent hash ring (160 virtual nodes per worker) so that
 adding/removing a worker only remaps ~1/N of the key space.
 Prompt prefix tokenization prefers a real tokenizer when available,
-falling back to whitespace splitting for compatibility.
+falling back to whitespace splitting when no tokenizer is available.
 """
 
 import bisect
 import hashlib
-import itertools
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from xpyd.scheduler.scheduler_base import SchedulingPolicy
+from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -159,80 +158,43 @@ class CacheAwarePolicy(SchedulingPolicy):
     # Public API
     # ------------------------------------------------------------------
 
-    def add_worker(self, addr: str) -> None:
+    def on_instance_added(self, role, address, max_model_len):
         """Add a worker to the pool."""
         with self.lock:
-            self._ring.add_worker(addr)
+            self._ring.add_worker(address)
 
-    def remove_worker(self, addr: str) -> None:
+    def on_instance_removed(self, role, address, index):
         """Remove a worker from the pool."""
         with self.lock:
-            self._ring.remove_worker(addr)
-
-    def select(
-        self,
-        *,
-        prompt: Optional[str] = None,
-    ) -> Optional[str]:
-        """Select a worker based on prompt prefix hash.
-
-        Returns ``None`` when no workers are available or prompt is
-        ``None``.
-        """
-        with self.lock:
-            if len(self._ring) == 0:
-                return None
-            if prompt is None:
-                prompt = ""
-            h = self._prefix_hash(prompt)
-            return self._ring.get(h)
+            self._ring.remove_worker(address)
 
     # ------------------------------------------------------------------
     # SchedulingPolicy interface
     # ------------------------------------------------------------------
 
-    def select_from(
-        self,
-        candidates: set[str],
+    @classmethod
+    def from_config(
+        cls,
         *,
-        prompt: Optional[str] = None,
-    ) -> Optional[str]:
-        """Select a worker from *candidates* using cache-aware routing.
+        prefill_instances=(),
+        decode_instances=(),
+        workers=(),
+        registry=None,
+        tokenizer=None,
+        **options,
+    ):
+        return cls(
+            workers=list(workers), registry=registry, tokenizer=tokenizer, **options
+        )
 
-        Walks the ring clockwise from the prefix hash and returns the
-        first worker that belongs to *candidates*.
-        """
+    def select_node(
+        self, context: SchedulingContext, candidates: Sequence[Candidate]
+    ) -> Optional[str]:
+        """Walk clockwise to the first eligible worker for the prompt prefix."""
         with self.lock:
             if len(self._ring) == 0 or not candidates:
                 return None
-            if prompt is None:
-                prompt = ""
-            h = self._prefix_hash(prompt)
-            return self._ring.lookup_from(h, candidates)
-
-    def schedule(
-        self,
-        cycler: itertools.cycle,
-        is_prompt: Optional[bool] = None,
-        request_len: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        model: str = "",
-        *,
-        prompt: Optional[str] = None,
-        **kwargs,
-    ) -> Optional[str]:
-        """Schedule using prompt prefix for cache-aware routing.
-
-        The *is_prompt* flag is passed by the router to distinguish
-        prefill from decode phases.  Both phases are routed through
-        cache-aware hashing.  When a registry is attached, the ring
-        contains all workers and results are filtered to the
-        appropriate role based on *is_prompt*.
-        """
-        if self._registry is not None:
-            role = "prefill" if is_prompt else "decode"
-            candidates = set(self._registry.get_available_instances(role, model=model))
-            if candidates:
-                return self.select_from(candidates, prompt=prompt)
-            return None
-        return self.select(prompt=prompt)
+            h = self._prefix_hash(context.prompt or "")
+            return self._ring.lookup_from(
+                h, {candidate.address for candidate in candidates}
+            )

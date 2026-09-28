@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for per-model tokenizer loading and scheduler fallback."""
 
-import itertools
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from xpyd.proxy import Proxy
 from xpyd.registry import InstanceRegistry
-from xpyd.scheduler import RoundRobinSchedulingPolicy
+from xpyd.scheduler import RoundRobinSchedulingPolicy, Scheduler, SchedulingContext
 
 
 def _proxy(tokenizer_path=None):
@@ -105,27 +104,23 @@ def test_pd_model_with_failed_tokenizer_uses_round_robin():
     registry.mark_healthy("10.0.0.2:8000")
     proxy = _proxy()
     proxy.registry = registry
+    proxy.prefill_instances = ["10.0.0.1:8000"]
+    proxy.decode_instances = ["10.0.0.2:8000"]
+    proxy._scheduler = Scheduler(registry)
     proxy._round_robin_models.add("org/model")
     proxy._round_robin_policy = RoundRobinSchedulingPolicy(registry=registry)
     proxy.scheduling_policy = MagicMock()
 
-    selected = Proxy.schedule(
-        proxy,
-        itertools.cycle(["10.0.0.1:8000"]),
-        is_prompt=True,
-        request_len=0,
-        max_tokens=1,
-        model="org/model",
+    lease = proxy.reserve(
+        SchedulingContext(
+            role="prefill", request_len=0, max_tokens=1, model="org/model"
+        )
     )
-    Proxy.schedule_completion(
-        proxy,
-        prefill_instance=selected,
-        req_len=0,
-    )
+    lease.release()
 
-    assert selected == "10.0.0.1:8000"
-    proxy.scheduling_policy.schedule.assert_not_called()
-    proxy.scheduling_policy.schedule_completion.assert_not_called()
+    assert lease.address == "10.0.0.1:8000"
+    proxy.scheduling_policy.select_node.assert_not_called()
+    proxy.scheduling_policy.on_request_finished.assert_not_called()
 
 
 @pytest.mark.asyncio

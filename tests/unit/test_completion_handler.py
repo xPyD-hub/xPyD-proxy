@@ -1,5 +1,6 @@
 """Unit tests for the unified completion handler helpers."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,20 @@ from xpyd.routes.completions import (
     tokenize_zmq_prompt,
     validate_completion_request,
 )
+from xpyd.scheduler import RoundRobinSchedulingPolicy, Scheduler, SchedulingContext
+
+
+def reservations(request_len=5):
+    runtime = Scheduler()
+    policy = RoundRobinSchedulingPolicy()
+    return [
+        runtime.reserve(
+            policy,
+            SchedulingContext(role=role, request_len=request_len),
+            [f"{role}:8000"],
+        )
+        for role in ("prefill", "decode")
+    ]
 
 
 @pytest.fixture
@@ -440,7 +455,7 @@ class TestZmqChatHelpers:
         }
 
     @pytest.mark.asyncio
-    async def test_prefill_first_nonstream_merges_chat_and_usage(self, server):
+    async def test_prefill_first_nonstream_merges_chat_and_usage(self):
         async def decode():
             yield json.dumps(
                 {
@@ -461,10 +476,11 @@ class TestZmqChatHelpers:
             "model": "model",
             "choices": [{"text": "A"}],
         }
+        reservation = MagicMock()
         chunks = [
             chunk
             async for chunk in _zmq_nonstream_generator(
-                prefill, decode(), server, "p", "d", 3, is_chat=True
+                prefill, decode(), reservation, is_chat=True
             )
         ]
         output = json.loads(chunks[0])
@@ -474,9 +490,10 @@ class TestZmqChatHelpers:
             "completion_tokens": 2,
             "total_tokens": 5,
         }
+        reservation.release_all.assert_called_once_with()
 
     @pytest.mark.asyncio
-    async def test_prefill_first_stream_has_chat_shape(self, server):
+    async def test_prefill_first_stream_has_chat_shape(self):
         async def decode():
             yield (
                 b'data: {"id":"cmpl-d","created":2,"model":"model",'
@@ -495,10 +512,11 @@ class TestZmqChatHelpers:
             "model": "model",
             "choices": [{"text": "A"}],
         }
+        reservation = MagicMock()
         chunks = [
             chunk
             async for chunk in _zmq_stream_generator(
-                prefill, decode(), server, "p", "d", 3, is_chat=True
+                prefill, decode(), reservation, is_chat=True
             )
         ]
         head = json.loads(chunks[0].decode().removeprefix("data: "))
@@ -517,6 +535,7 @@ class TestZmqChatHelpers:
             "completion_tokens": 2,
             "total_tokens": 5,
         }
+        reservation.release_all.assert_called_once_with()
 
 
 class TestHandleCompletion:
@@ -538,6 +557,35 @@ class TestHandleCompletion:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 400
         track_end.assert_called_once_with("/v1/completions", 0)
+
+    @pytest.mark.asyncio
+    async def test_second_selection_failure_releases_prefill(self, server):
+        request = MagicMock(headers={}, client=None)
+        request.json = AsyncMock(return_value={"prompt": "hello"})
+        leases = reservations()
+        leases[1].release()
+        server.reserve.side_effect = [leases[0], RuntimeError("selection failed")]
+        result = await handle_completion("/v1/completions", request, server, False)
+        assert result.status_code == 500
+        assert leases[0]._released
+
+    @pytest.mark.asyncio
+    async def test_prefill_cancellation_releases_both_nodes(self, server):
+        request = MagicMock(headers={}, client=None)
+        request.json = AsyncMock(return_value={"model": "model", "prompt": "hello"})
+        leases = reservations()
+        server.reserve.side_effect = leases
+        server.disaggregated_mode = "direct"
+
+        async def forward(*args, **kwargs):
+            raise asyncio.CancelledError()
+            yield b""  # pragma: no cover
+
+        server.forward_request = forward
+        with pytest.raises(asyncio.CancelledError):
+            await handle_completion("/v1/completions", request, server, False)
+        assert all(lease._released for lease in leases)
+        server.registry.record_success.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_required_field(self, server):
@@ -563,10 +611,7 @@ class TestHandleCompletion:
         raw_request.headers = {}
         raw_request.client = None
 
-        server.schedule = MagicMock(return_value=None)
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
-        server.exception_handler = MagicMock()
+        server.reserve = MagicMock(return_value=None)
         labels = {
             "instance": "unknown",
             "error_type": "no_available_instance",
@@ -585,7 +630,6 @@ class TestHandleCompletion:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 503
-        server.exception_handler.assert_not_called()
         track_end.assert_called_once_with("/v1/completions", 0)
         assert (
             REGISTRY.get_sample_value("proxy_instance_errors_total", labels)
@@ -593,22 +637,14 @@ class TestHandleCompletion:
         )
 
     def test_request_reservation_releases_each_node_once(self, server):
-        server.exception_handler = MagicMock()
-        reservation = _RequestReservation(
-            server,
-            "prefill:8000",
-            "decode:8000",
-            10,
-        )
+        leases = reservations(10)
+        reservation = _RequestReservation(*leases)
 
         reservation.release_all()
         reservation.release_all()
 
-        server.exception_handler.assert_called_once_with(
-            prefill_instance="prefill:8000",
-            decode_instance="decode:8000",
-            req_len=10,
-        )
+        assert all(lease._released for lease in leases)
+        assert all(value == 0 for value in leases[0]._runtime._active.values())
 
     @pytest.mark.asyncio
     async def test_nixl_prefill_parse_error_releases_reservations(self, server):
@@ -623,10 +659,8 @@ class TestHandleCompletion:
         raw_request.headers = {}
         raw_request.client = None
         server.disaggregated_mode = "nixl"
-        server.schedule = MagicMock(side_effect=["prefill:8000", "decode:8000"])
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
-        server.exception_handler = MagicMock()
+        leases = reservations()
+        server.reserve = MagicMock(side_effect=leases)
         server._record_failure = MagicMock()
 
         async def forward(*_args, **_kwargs):
@@ -639,11 +673,8 @@ class TestHandleCompletion:
                 "/v1/completions", raw_request, server, is_chat=False
             )
 
-        server.exception_handler.assert_called_once_with(
-            prefill_instance="prefill:8000",
-            decode_instance="decode:8000",
-            req_len=5,
-        )
+        assert all(lease._released for lease in leases)
+        server.registry.record_success.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unknown_aggregated_model_ends_metrics(self, server):
@@ -659,7 +690,7 @@ class TestHandleCompletion:
         raw_request.client = None
 
         server._is_aggregated_model.return_value = True
-        server.schedule_aggregated.return_value = None
+        server.reserve.return_value = None
         server.registry.get_registered_models.return_value = ["known-model"]
 
         with (
@@ -701,13 +732,11 @@ class TestHandleCompletion:
             "input_ids": [1, 2, 3],
             "attention_mask": [1, 1, 1],
         }
-        server.schedule = MagicMock(side_effect=["prefill:8000", "decode:8000"])
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
+        leases = reservations(3)
+        server.reserve = MagicMock(side_effect=leases)
         server.zmq_config.receivers = {"decode:8000": receiver}
         server.zmq_notifications.register = AsyncMock()
         server.zmq_notifications.wait = AsyncMock()
-        server.exception_handler = MagicMock()
         server._record_failure = MagicMock()
         server.registry = None
         server.generator = D_first_token_generator
@@ -781,7 +810,8 @@ class TestHandleCompletion:
             else []
         )
         assert [call[0] for call in forwarded] == expected_urls
-        assert server.schedule.call_count == 2
+        assert server.reserve.call_count == 2
+        assert all(lease._released for lease in leases)
         assert "messages" not in forwarded[0][1]
         assert forwarded[0][1]["prompt"] == [1, 2, 3]
         if len(forwarded) == 2:

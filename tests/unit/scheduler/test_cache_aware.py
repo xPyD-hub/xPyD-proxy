@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CacheAwarePolicy and ConsistentHashRing."""
 
-import itertools
 from unittest.mock import MagicMock
 
 from xpyd.registry import InstanceRegistry
+from xpyd.scheduler import Candidate, Scheduler, SchedulingContext
 from xpyd.scheduler.cache_aware import (
     DEFAULT_PREFIX_LENGTH,
     VIRTUAL_NODES_PER_WORKER,
@@ -119,78 +119,141 @@ class TestCacheAwarePolicy:
         base_tokens = [f"token{i}" for i in range(300)]
         prompt_a = " ".join(base_tokens)
         prompt_b = " ".join(base_tokens + ["extra", "suffix", "here"])
-        w1 = policy.select(prompt=prompt_a)
-        w2 = policy.select(prompt=prompt_b)
+        w1 = policy.select_node(
+            SchedulingContext(role="decode", prompt=prompt_a),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
+        w2 = policy.select_node(
+            SchedulingContext(role="decode", prompt=prompt_b),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert w1 == w2
 
     def test_different_prefix_can_differ(self):
         policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
         selected = set()
         for i in range(50):
-            w = policy.select(prompt=f"Unique prompt {i} " * 100)
+            w = policy.select_node(
+                SchedulingContext(role="decode", prompt=f"Unique prompt {i} " * 100),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
             selected.add(w)
         assert len(selected) > 1
 
     def test_no_workers_returns_none(self):
         policy = CacheAwarePolicy(workers=[], prefix_length=256)
-        assert policy.select(prompt="hello") is None
+        assert (
+            policy.select_node(
+                SchedulingContext(role="decode", prompt="hello"),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            is None
+        )
 
     def test_single_worker(self):
         policy = CacheAwarePolicy(workers=["w1"], prefix_length=256)
-        assert policy.select(prompt="anything") == "w1"
-        assert policy.select(prompt="something else") == "w1"
+        assert (
+            policy.select_node(
+                SchedulingContext(role="decode", prompt="anything"),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            == "w1"
+        )
+        assert (
+            policy.select_node(
+                SchedulingContext(role="decode", prompt="something else"),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            == "w1"
+        )
 
     def test_none_prompt(self):
         policy = CacheAwarePolicy(workers=["w1", "w2"], prefix_length=256)
-        result = policy.select(prompt=None)
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt=None),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w2")
 
     def test_empty_prompt(self):
         policy = CacheAwarePolicy(workers=["w1", "w2"], prefix_length=256)
-        result = policy.select(prompt="")
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt=""),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w2")
 
     def test_prompt_shorter_than_prefix_length(self):
         policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
-        result = policy.select(prompt="short")
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt="short"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w2", "w3")
-        assert policy.select(prompt="short") == result
+        assert (
+            policy.select_node(
+                SchedulingContext(role="decode", prompt="short"),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            == result
+        )
 
     def test_deterministic(self):
         policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
         prompt = "deterministic test prompt " * 20
-        results = {policy.select(prompt=prompt) for _ in range(10)}
+        results = {
+            policy.select_node(
+                SchedulingContext(role="decode", prompt=prompt),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            for _ in range(10)
+        }
         assert len(results) == 1
 
     def test_add_worker(self):
         policy = CacheAwarePolicy(workers=["w1", "w2"], prefix_length=256)
-        policy.add_worker("w3")
-        result = policy.select(prompt="test")
+        policy.on_instance_added("decode", "w3", 4096)
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt="test"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w2", "w3")
 
     def test_remove_worker(self):
         policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
-        policy.remove_worker("w2")
-        result = policy.select(prompt="test")
+        policy.on_instance_removed("decode", "w2", 0)
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt="test"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w3")
 
     def test_add_duplicate_worker(self):
         policy = CacheAwarePolicy(workers=["w1", "w2"], prefix_length=256)
-        policy.add_worker("w1")
+        policy.on_instance_added("decode", "w1", 4096)
         assert len(policy._ring) == 2
 
     def test_remove_nonexistent_worker(self):
         policy = CacheAwarePolicy(workers=["w1"], prefix_length=256)
-        policy.remove_worker("w99")
-        assert policy.select(prompt="test") == "w1"
+        policy.on_instance_removed("decode", "w99", 0)
+        assert (
+            policy.select_node(
+                SchedulingContext(role="decode", prompt="test"),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            == "w1"
+        )
 
-    def test_schedule_interface(self):
-        """schedule() delegates to select()."""
+    def test_runtime_preserves_prompt(self):
         policy = CacheAwarePolicy(workers=["w1", "w2", "w3"], prefix_length=256)
         prompt = "The quick brown fox " * 50
-        cycler = itertools.cycle(["w1", "w2", "w3"])
-        result = policy.schedule(cycler, prompt=prompt)
-        assert result == policy.select(prompt=prompt)
+        context = SchedulingContext(role="decode", prompt=prompt)
+        nodes = ["w1", "w2", "w3"]
+        lease = Scheduler().reserve(policy, context, nodes)
+        assert lease.address == policy.select_node(
+            context, [Candidate(node) for node in nodes]
+        )
+        lease.release()
 
     def test_schedule_does_not_fall_back_to_a_draining_worker(self):
         registry = InstanceRegistry()
@@ -199,10 +262,10 @@ class TestCacheAwarePolicy:
         registry.begin_draining("decode", "w1")
         policy = CacheAwarePolicy(workers=["w1"], registry=registry)
 
-        selected = policy.schedule(
-            itertools.cycle(["w1"]),
-            is_prompt=False,
-            prompt="test",
+        selected = Scheduler(registry).reserve(
+            policy,
+            SchedulingContext(role="decode", prompt="test"),
+            ["w1"],
         )
 
         assert selected is None
@@ -210,8 +273,14 @@ class TestCacheAwarePolicy:
     def test_custom_prefix_length(self):
         workers = ["w1", "w2", "w3"]
         policy = CacheAwarePolicy(workers=workers, prefix_length=2)
-        w1 = policy.select(prompt="hello world AAAA BBBB")
-        w2 = policy.select(prompt="hello world CCCC DDDD")
+        w1 = policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world AAAA BBBB"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
+        w2 = policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world CCCC DDDD"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert w1 == w2
 
     def test_default_prefix_length(self):
@@ -231,7 +300,10 @@ class TestCacheAwarePolicy:
             prefix_length=256,
             tokenizer=mock_tokenizer,
         )
-        policy.select(prompt="hello world")
+        policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         mock_tokenizer.encode.assert_called_once_with("hello world")
 
     def test_tokenizer_fallback_on_error(self):
@@ -244,7 +316,10 @@ class TestCacheAwarePolicy:
             tokenizer=mock_tokenizer,
         )
         # Should not raise, falls back to whitespace split
-        result = policy.select(prompt="hello world tokens here")
+        result = policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world tokens here"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert result in ("w1", "w2")
 
     def test_no_tokenizer_uses_whitespace_split(self):
@@ -255,8 +330,14 @@ class TestCacheAwarePolicy:
             tokenizer=None,
         )
         # "hello world X" and "hello world Y" share first 2 whitespace tokens
-        w1 = policy.select(prompt="hello world AAA")
-        w2 = policy.select(prompt="hello world BBB")
+        w1 = policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world AAA"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
+        w2 = policy.select_node(
+            SchedulingContext(role="decode", prompt="hello world BBB"),
+            [Candidate(address) for address in sorted(policy._ring.workers)],
+        )
         assert w1 == w2
 
     def test_tokenizer_produces_different_routing_than_whitespace(self):
@@ -276,8 +357,17 @@ class TestCacheAwarePolicy:
         )
         prompt = "alpha beta gamma delta epsilon " * 20
         # Both should return valid workers (may or may not differ)
-        r1 = policy_with_tok.select(prompt=prompt)
-        r2 = policy_without_tok.select(prompt=prompt)
+        r1 = policy_with_tok.select_node(
+            SchedulingContext(role="decode", prompt=prompt),
+            [Candidate(address) for address in sorted(policy_with_tok._ring.workers)],
+        )
+        r2 = policy_without_tok.select_node(
+            SchedulingContext(role="decode", prompt=prompt),
+            [
+                Candidate(address)
+                for address in sorted(policy_without_tok._ring.workers)
+            ],
+        )
         assert r1 in ("w1", "w2", "w3", "w4")
         assert r2 in ("w1", "w2", "w3", "w4")
 
@@ -292,16 +382,34 @@ class TestCacheAwarePolicy:
         p2 = CacheAwarePolicy(workers=workers, prefix_length=256)
         for i in range(50):
             prompt = f"stability test prompt number {i} " * 10
-            assert p1.select(prompt=prompt) == p2.select(prompt=prompt)
+            assert p1.select_node(
+                SchedulingContext(role="decode", prompt=prompt),
+                [Candidate(address) for address in sorted(p1._ring.workers)],
+            ) == p2.select_node(
+                SchedulingContext(role="decode", prompt=prompt),
+                [Candidate(address) for address in sorted(p2._ring.workers)],
+            )
 
     def test_add_worker_minimal_remapping(self):
         """Adding a worker to the policy remaps minimal keys."""
         workers = ["w1", "w2", "w3", "w4"]
         policy = CacheAwarePolicy(workers=workers, prefix_length=256)
         prompts = [f"prompt {i} content " * 20 for i in range(200)]
-        before = {p: policy.select(prompt=p) for p in prompts}
-        policy.add_worker("w5")
-        after = {p: policy.select(prompt=p) for p in prompts}
+        before = {
+            p: policy.select_node(
+                SchedulingContext(role="decode", prompt=p),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            for p in prompts
+        }
+        policy.on_instance_added("decode", "w5", 4096)
+        after = {
+            p: policy.select_node(
+                SchedulingContext(role="decode", prompt=p),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            for p in prompts
+        }
         moved = sum(1 for p in prompts if before[p] != after[p])
         # ~1/5 = 20% should move, allow generous 40% margin
         assert moved < len(prompts) * 0.40
@@ -311,9 +419,21 @@ class TestCacheAwarePolicy:
         workers = ["w1", "w2", "w3", "w4"]
         policy = CacheAwarePolicy(workers=workers, prefix_length=256)
         prompts = [f"prompt {i} content " * 20 for i in range(200)]
-        before = {p: policy.select(prompt=p) for p in prompts}
-        policy.remove_worker("w3")
-        after = {p: policy.select(prompt=p) for p in prompts}
+        before = {
+            p: policy.select_node(
+                SchedulingContext(role="decode", prompt=p),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            for p in prompts
+        }
+        policy.on_instance_removed("decode", "w3", 0)
+        after = {
+            p: policy.select_node(
+                SchedulingContext(role="decode", prompt=p),
+                [Candidate(address) for address in sorted(policy._ring.workers)],
+            )
+            for p in prompts
+        }
         # Only keys previously on w3 should have moved
         for p in prompts:
             if before[p] != "w3":

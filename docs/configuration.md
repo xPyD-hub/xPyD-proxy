@@ -43,7 +43,7 @@ decode:
   world_size_per_node: 8
 
 # Scheduling
-scheduling: loadbalanced        # roundrobin | loadbalanced
+scheduling: loadbalanced        # roundrobin | loadbalanced | consistent_hash | power_of_two | cache_aware
 disaggregated_mode: direct     # direct | nixl | zmq
 first_token_source: decode       # prefill | decode; applies to every disaggregated mode
 
@@ -75,7 +75,7 @@ startup:
 | `decode.tp_size` | integer | **yes** | — | Tensor-parallel degree for each decode instance. |
 | `decode.dp_size` | integer | **yes** | — | Total number of decode data-parallel instances. |
 | `decode.world_size_per_node` | integer | **yes** | — | Number of GPUs / workers per decode node. |
-| `scheduling` | string | no | `loadbalanced` | Scheduling policy name. Currently `roundrobin` or `loadbalanced`. |
+| `scheduling` | string | no | `loadbalanced` | Registered policy name: `roundrobin`, `loadbalanced`, `consistent_hash`, `power_of_two`, or `cache_aware`. See [Scheduling Policies](scheduling.md) for options and the extension interface. |
 | `disaggregated_mode` | string | no | `direct` | KV transfer mode. `direct`, `nixl`, and `zmq` are supported. |
 | `first_token_source` | string | no | `decode` | Backend that provides the first client-visible token. `prefill` and `decode` are supported uniformly in direct, NIXL, and ZMQ modes. |
 | `admin_api_key` | string | no | `""` | API key for admin endpoints. Can also be set via `ADMIN_API_KEY` env var. |

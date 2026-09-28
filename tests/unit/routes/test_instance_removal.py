@@ -3,9 +3,6 @@
 
 # Standard
 import asyncio
-import itertools
-import threading
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third Party
@@ -14,27 +11,24 @@ import pytest
 # First Party
 from xpyd.proxy import Proxy
 from xpyd.registry import InstanceRegistry, InstanceStatus
-from xpyd.scheduler.load_balanced import LoadBalancedScheduler
+from xpyd.scheduler import (
+    LoadBalancedScheduler,
+    RoundRobinSchedulingPolicy,
+    SchedulingContext,
+)
 
 
-def _proxy(registry: InstanceRegistry) -> SimpleNamespace:
-    policy = MagicMock()
-    policy.lock = threading.Lock()
-    return SimpleNamespace(
-        registry=registry,
+def _proxy(registry: InstanceRegistry) -> Proxy:
+    proxy = Proxy(
         prefill_instances=["127.0.0.1:8100"],
         decode_instances=["127.0.0.1:8200", "127.0.0.1:8201"],
-        aggregated_instances={},
-        prefill_cycler=itertools.cycle(["127.0.0.1:8100"]),
-        decode_cycler=itertools.cycle(["127.0.0.1:8200", "127.0.0.1:8201"]),
-        scheduling_policy=policy,
-        _round_robin_policy=policy,
-        _round_robin_models=set(),
-        _aggregated_policies={},
-        _instance_mutation_lock=asyncio.Lock(),
-        health_monitor=MagicMock(),
-        discovery=MagicMock(),
+        model="test/model",
+        registry=registry,
+        scheduling_policy=RoundRobinSchedulingPolicy(registry=registry),
     )
+    proxy.health_monitor = MagicMock()
+    proxy.discovery = MagicMock()
+    return proxy
 
 
 @pytest.mark.asyncio
@@ -108,23 +102,18 @@ def test_pd_schedule_tracks_registry_active_requests() -> None:
     registry.add("prefill", "127.0.0.1:8100", model="test/model")
     registry.mark_healthy("127.0.0.1:8100")
     proxy = _proxy(registry)
-    proxy.scheduling_policy.schedule.return_value = "127.0.0.1:8100"
-
-    selected = Proxy.schedule(
-        proxy,
-        proxy.prefill_cycler,
-        is_prompt=True,
-        request_len=1,
-        max_tokens=1,
-        model="test/model",
+    lease = proxy.reserve(
+        SchedulingContext(
+            role="prefill", request_len=1, max_tokens=1, model="test/model"
+        )
     )
 
-    assert selected == "127.0.0.1:8100"
-    assert registry.get_active_requests(selected) == 1
+    assert lease.address == "127.0.0.1:8100"
+    assert registry.get_active_requests(lease.address) == 1
 
-    Proxy.schedule_completion(proxy, prefill_instance=selected, req_len=1)
+    lease.release()
 
-    assert registry.get_active_requests(selected) == 0
+    assert registry.get_active_requests(lease.address) == 0
 
 
 @pytest.mark.asyncio
@@ -194,8 +183,6 @@ async def test_load_balanced_scheduler_can_select_runtime_instance() -> None:
     proxy.scheduling_policy = policy
     proxy.prefill_instances = policy.prefill_instances
     proxy.decode_instances = policy.decode_instances
-    proxy.prefill_cycler = itertools.cycle(proxy.prefill_instances)
-    proxy.decode_cycler = itertools.cycle(proxy.decode_instances)
     policy.decode_bs_counter[0] = 1
 
     with patch.object(
@@ -205,12 +192,11 @@ async def test_load_balanced_scheduler_can_select_runtime_instance() -> None:
     ):
         await Proxy.add_instance(proxy, "decode", "127.0.0.1:8202")
 
-    selected = policy.schedule(
-        proxy.decode_cycler,
-        is_prompt=False,
-        request_len=1,
-        max_tokens=1,
-        model="test/model",
+    lease = proxy.reserve(
+        SchedulingContext(
+            role="decode", request_len=1, max_tokens=1, model="test/model"
+        )
     )
-    assert selected == "127.0.0.1:8202"
+    assert lease.address == "127.0.0.1:8202"
+    lease.release()
     assert policy.decode_model_len == [4096, 8192]

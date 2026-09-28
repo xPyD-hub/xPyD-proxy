@@ -43,7 +43,7 @@ for latency (smaller batch, faster per-token).
 
 ## Core Components
 
-### Proxy (`core/MicroDisaggregatedProxyServer.py`)
+### Proxy (`xpyd/proxy.py`)
 
 The central routing and scheduling component. It:
 
@@ -59,6 +59,17 @@ The central routing and scheduling component. It:
 |--------|-------|-------------|
 | **Round Robin** | `RoundRobinSchedulingPolicy` | Cycles through instances sequentially. Simple and predictable. |
 | **Load Balanced** | `LoadBalancedScheduler` | Tracks in-flight request counts and token lengths per instance. Routes new requests to the least-loaded instance. |
+| **Consistent Hash** | `ConsistentHashPolicy` | Routes session keys through a stable hash ring. |
+| **Power of Two** | `PowerOfTwoPolicy` | Chooses the less-loaded of two sampled candidates. |
+| **Cache Aware** | `CacheAwarePolicy` | Routes matching prompt prefixes to the same worker. |
+
+All policies implement `SchedulingPolicy`. Configuration selects a registered
+subclass through its `from_config()` factory; the proxy invokes common selection
+and membership hooks without branching on concrete strategy types.
+`scheduler/runtime.py` filters eligible nodes and owns active-request
+reservations. Policy-specific token/KV accounting stays inside each subclass.
+Aggregated and P/D request paths share this boundary; see
+[Scheduling Policies](scheduling.md#common-policy-contract).
 
 ## Request Flow
 

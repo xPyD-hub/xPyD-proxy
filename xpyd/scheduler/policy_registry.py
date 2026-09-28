@@ -46,22 +46,18 @@ class PolicyRegistry:
             )
         self._policies[name] = policy_cls
 
-    def create(self, name: str, **kwargs: Any) -> SchedulingPolicy:
-        """Create a new instance of the policy registered as *name*.
+    def has(self, name: str) -> bool:
+        """Return whether *name* is a registered policy."""
+        return name in self._policies
 
-        Raises:
-            ValueError: If *name* has not been registered.
-        """
+    def build(self, name: str, **kwargs: Any) -> SchedulingPolicy:
+        """Construct through the topology-independent policy factory."""
         if name not in self._policies:
             raise ValueError(
                 f"Unknown scheduling policy: {name!r}. "
                 f"Available: {self.list_policies()}"
             )
-        return self._policies[name](**kwargs)
-
-    def has(self, name: str) -> bool:
-        """Return whether *name* is a registered policy."""
-        return name in self._policies
+        return self._policies[name].from_config(**kwargs)
 
     def list_policies(self) -> list[str]:
         """Return a sorted list of registered policy names."""
@@ -76,7 +72,6 @@ def _build_default_registry() -> PolicyRegistry:
     registry.register("roundrobin", RoundRobinSchedulingPolicy)
     registry.register("loadbalanced", LoadBalancedScheduler)
 
-    # Future policies — placeholders registered when their classes exist.
     registry.register("consistent_hash", ConsistentHashPolicy)
     registry.register("power_of_two", PowerOfTwoPolicy)
     registry.register("cache_aware", CacheAwarePolicy)
