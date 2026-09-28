@@ -218,7 +218,9 @@ def test_only_unified_policy_entry_points_are_exposed(model_lengths, strategy):
 
 
 def test_no_proxy_scheduler_compatibility_exports_or_adapters():
-    import xpyd.proxy as proxy_module
+    from importlib import import_module
+
+    proxy_module = import_module("xpyd.proxy")
 
     for name in ("RoundRobinSchedulingPolicy", "LoadBalancedScheduler"):
         assert not hasattr(proxy_module, name)
