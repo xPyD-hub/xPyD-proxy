@@ -17,7 +17,13 @@ reservations are checked in disaggregated mode.
 
 Round-robin must repeat its cycle, consistent-hash must preserve a session
 across different prompts, and cache-aware must preserve a full shared prefix
-across different sessions. All request reservations must drain at the end.
+across different sessions. Affinity inputs are selected using the policy's
+hash-ring lookup so that every configured node has a known target key; the
+proxy must choose the exact expected node for each role. This is not a
+small-sample distribution assertion. Repeated requests vary the non-routing
+input (prompt or session), and load-balanced/round-robin substitutions must
+fail. An implementation that always selects one node cannot satisfy the
+coverage and mapping checks. All request reservations must drain at the end.
 
 The CPU NIXL and GPU aggregated matrices run these checks in addition to their
 real inference smoke tests. The controlled backends test routing semantics,

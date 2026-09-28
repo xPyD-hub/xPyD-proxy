@@ -45,3 +45,12 @@ def test_real_proxy_rejects_round_robin_mutation(topology, strategy):
     with pytest.raises(AssertionError) as failure:
         HARNESS["run"](topology, strategy, actual_strategy="roundrobin")
     assert isinstance(failure.value.args[0], tuple)
+
+
+@pytest.mark.parametrize("topology", ["aggregated", "disaggregated"])
+@pytest.mark.parametrize("strategy", ["consistent_hash", "cache_aware"])
+@pytest.mark.parametrize("replacement", ["loadbalanced", "roundrobin"])
+def test_affinity_rejects_wrong_policy(topology, strategy, replacement):
+    with pytest.raises(AssertionError) as failure:
+        HARNESS["run"](topology, strategy, actual_strategy=replacement)
+    assert failure.value.args[0][0] == "affinity-routing"

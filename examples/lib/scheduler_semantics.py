@@ -63,6 +63,52 @@ def assert_avoids_busy(selections, busy):
             assert selected[role] != address, (role, selected, busy)
 
 
+def affinity_cases(topology, strategy, instances):
+    sys.path.insert(0, str(ROOT))
+    from xpyd.scheduler import CacheAwarePolicy, ConsistentHashPolicy
+
+    candidates = {
+        role: {node["address"] for node in instances if node["role"] == role}
+        for role in dict.fromkeys(node["role"] for node in instances)
+    }
+    workers = [node["address"] for node in instances]
+    if strategy == "consistent_hash":
+        policy = ConsistentHashPolicy(workers=workers)
+    else:
+        tokenizer = None
+        if topology == "aggregated":
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                ROOT / "tests/assets" / MODEL, local_files_only=True
+            )
+        policy = CacheAwarePolicy(workers=workers, tokenizer=tokenizer)
+    uncovered = {
+        (role, address) for role, nodes in candidates.items() for address in nodes
+    }
+    cases = []
+    for index in range(4096):
+        session = f"affinity-{index}"
+        # Known vocabulary keeps prefixes distinct under both tokenization paths.
+        words = ["hello" if index & (1 << bit) else "world" for bit in range(12)]
+        prefix = (" ".join(words) + " ") * 32
+        expected = {
+            role: (
+                policy.select_from(nodes, header=session)
+                if strategy == "consistent_hash"
+                else policy.select_from(nodes, prompt=prefix)
+            )
+            for role, nodes in candidates.items()
+        }
+        covered = set(expected.items()) & uncovered
+        if covered:
+            cases.append((session, prefix, expected))
+            uncovered -= covered
+        if not uncovered:
+            return cases
+    raise AssertionError(f"Could not construct affinity keys for nodes: {uncovered}")
+
+
 def run(topology, strategy, actual_strategy=None):
     records = []
     entered = threading.Event()
@@ -228,16 +274,28 @@ def run(topology, strategy, actual_strategy=None):
                         assert len(set(values[:2])) == 2, values
                         assert values == values[:2] * 3, values
                 else:
-                    selected = []
-                    for i in range(4):
-                        session = "sticky" if strategy == "consistent_hash" else str(i)
-                        prompt = (
-                            f"different prompt {i}"
-                            if strategy == "consistent_hash"
-                            else ("shared prefix " * 256) + str(i)
-                        )
-                        selected.append(select(session, prompt))
-                    assert all(item == selected[0] for item in selected), selected
+                    for session, prefix, expected in affinity_cases(
+                        topology, strategy, instances
+                    ):
+                        for index in range(3):
+                            actual = select(
+                                (
+                                    session
+                                    if strategy == "consistent_hash"
+                                    else f"{session}-{index}"
+                                ),
+                                (
+                                    f"different prompt {index}"
+                                    if strategy == "consistent_hash"
+                                    else prefix + str(index)
+                                ),
+                            )
+                            assert actual == expected, (
+                                "affinity-routing",
+                                strategy,
+                                expected,
+                                actual,
+                            )
                 wait_for(idle, process)
                 print(f"PASS {topology}/{strategy}: controlled scheduling semantics")
             finally:
