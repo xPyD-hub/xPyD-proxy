@@ -43,3 +43,51 @@ def test_source_launcher_preserves_failure_status(tmp_path):
         timeout=30,
     )
     assert result.returncode != 0
+
+
+@pytest.mark.parametrize("arguments", [["--version"], ["proxy", "--help"]])
+def test_source_launcher_ignores_other_checkout(tmp_path, arguments):
+    package = tmp_path / "xpyd"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "proxy.py").write_text(
+        "def main():\n    print('WRONG_CHECKOUT')\n    raise SystemExit(99)\n"
+    )
+    (tmp_path / "sitecustomize.py").write_text(
+        "import atexit\n"
+        "import sys\n"
+        "@atexit.register\n"
+        "def report_source():\n"
+        "    module = sys.modules.get('xpyd.proxy')\n"
+        "    if module is not None:\n"
+        "        print('XPYD_SOURCE=' + module.__file__)\n"
+    )
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), *arguments],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PYTHON": sys.executable,
+            "PYTHONPATH": str(tmp_path),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WRONG_CHECKOUT" not in result.stdout
+    assert f"XPYD_SOURCE={ROOT / 'xpyd/proxy.py'}" in result.stdout.splitlines()
+
+
+def test_source_launcher_preserves_relative_config_path(tmp_path):
+    config = tmp_path / "local config.yaml"
+    config.write_text("model: demo\ndecode:\n  - 127.0.0.1:8200\n")
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "--validate-config", config.name],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHON": sys.executable},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

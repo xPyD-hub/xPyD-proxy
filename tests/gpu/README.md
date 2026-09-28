@@ -32,6 +32,9 @@ including when an example is run directly instead of through this suite.
 An older `xpyd` executable on `PATH` is not used. The shell launcher defaults
 to `python3`; set `PYTHON` to select another interpreter. Python matrix runners
 use their own interpreter for the proxy as well.
+The launcher prioritizes its own checkout even when invoked from another
+checkout, while preserving the caller's working directory for relative
+configuration paths.
 
 The default suite covers aggregated routing policies, direct 2P2D, and a mixed
 aggregated/disaggregated deployment. Results are written beneath
