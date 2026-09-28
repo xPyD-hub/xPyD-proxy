@@ -1,0 +1,19 @@
+# The driver fills instances for aggregated (2A), direct (2P2D), or mixed
+# (1P1D + 2A). Logical model names remain distinct even with shared weights.
+instances:
+  - {address: "127.0.0.1:18200", role: prefill, model: lifecycle-pd}
+  - {address: "127.0.0.1:18201", role: decode, model: lifecycle-pd}
+  - {address: "127.0.0.1:18202", role: aggregated, model: lifecycle-aggregated}
+  - {address: "127.0.0.1:18203", role: aggregated, model: lifecycle-aggregated}
+port: 18869
+log_level: info
+scheduling: roundrobin
+disaggregated_mode: direct
+first_token_source: decode
+startup:
+  probe_interval_seconds: 1
+  heartbeat_interval_seconds: 1
+health_check:
+  enabled: true
+  interval_seconds: 1
+  timeout_seconds: 1

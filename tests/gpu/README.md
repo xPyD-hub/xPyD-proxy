@@ -1,5 +1,10 @@
 # Local GPU integration suite
 
+For portable CUDA/**Intel XPU** lifecycle coverage (proxy-first 503, node loss,
+reconnection, heartbeat/status and mixed-model isolation), use the independent
+[accelerator lifecycle scenario](../../examples/accelerator_lifecycle/README.md).
+The legacy matrix wrapper below remains NVIDIA-specific.
+
 This directory provides a CI-like, one-command wrapper around the GPU
 scenarios under `examples/`. It runs scenarios serially, captures their output,
 enforces a per-scenario timeout, verifies that ports and GPU processes are
