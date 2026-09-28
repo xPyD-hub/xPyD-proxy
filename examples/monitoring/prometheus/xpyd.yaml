@@ -3,6 +3,7 @@ instances:
     role: aggregated
     model: observability-demo
 scheduling: roundrobin
+host: 127.0.0.1
 port: 18868
 log_level: info
 startup:

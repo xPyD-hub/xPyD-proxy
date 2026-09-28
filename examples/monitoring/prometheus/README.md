@@ -50,14 +50,47 @@ or `nvidia-smi` after exit, before restarting a backend.
 | `http://127.0.0.1:19090/alerts` | `XPyDProxyDown` rule; inactive after recovery |
 | `http://127.0.0.1:18868/metrics` | Raw proxy metrics |
 
-When running inside a container or on a remote host, these addresses refer to
-that environment, not your laptop. Forward the loopback ports through your
-existing remote development/SSH setup. No ports are exposed publicly by this
-example. For example, an SSH tunnel to a host where Prometheus is accessible is:
+### Open the frontend from another computer
+
+Prometheus includes its own web frontend; the terminal-only machine does not
+need a desktop or browser. It scrapes xPyD's `/metrics`, stores time series,
+evaluates alerts, and serves the query/graph UI. Grafana is optional and is not
+started by this example.
+
+On the inference machine (A), run the XPU command above with **`--serve`** and
+leave that terminal open. Without `--serve`, verification stops the services.
+The owned proxy explicitly uses `host: 127.0.0.1`; the backend and Prometheus
+also bind to loopback. Other proxy configurations retain the default
+`host: 0.0.0.0` unless configured otherwise.
+
+On the computer with a browser (B), open another terminal and run:
 
 ```bash
-ssh -L 19090:127.0.0.1:19090 user@host
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:19090:127.0.0.1:19090 user@machine-A
 ```
+
+Keep that SSH connection open, then open **`http://127.0.0.1:19090/query` in B's
+browser**. `/targets` shows whether scraping works and `/alerts` shows alert
+state. No inbound firewall opening for 19090 or Grafana installation is needed.
+If B's port 19090 is occupied, change only the first port to 29090 and browse
+`http://127.0.0.1:29090/query`. To inspect raw metrics too, add
+`-L 127.0.0.1:18868:127.0.0.1:18868` to the SSH command.
+
+**Container boundary:** SSH forwarding resolves the destination `127.0.0.1`
+in the SSH server's network namespace. If A's terminal is inside Docker but
+SSH connects to the outer host, those loopback addresses are different (unless
+using host networking). Connect to an existing SSH endpoint inside the
+container, or forward 19090 through your existing remote-development/container
+port-forwarding interface. An ordinary Docker port publication does not reach
+a service bound only to the container's loopback. Do not change the services to
+public listeners merely to make this tunnel work.
+
+If the page fails, first check on A:
+`curl -f http://127.0.0.1:19090/-/ready`.
+If that succeeds, check the SSH tunnel, destination namespace, and B's local
+port. If the page loads but charts are empty, check `/targets` for `up=1`, select
+a recent time range, and keep demo traffic running.
 
 In Prometheus, try these expressions and select the graph view:
 

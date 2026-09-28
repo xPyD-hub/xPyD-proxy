@@ -3,12 +3,32 @@
 import runpy
 import socket
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 DEMO = runpy.run_path(
     str(Path(__file__).resolve().parents[2] / "examples/monitoring/prometheus/run.py")
 )
+
+
+@pytest.mark.parametrize("host", [None, "127.0.0.1"])
+def test_proxy_listener_uses_configured_host(host):
+    from xpyd.config import ProxyConfig
+    from xpyd.proxy import ProxyServer
+
+    path = (
+        Path(__file__).resolve().parents[2] / "examples/monitoring/prometheus/xpyd.yaml"
+    )
+    config = ProxyConfig.from_yaml(path)
+    assert config.host == "127.0.0.1"
+    if host is None:
+        config = ProxyConfig(**config.model_dump(exclude={"host"}))
+    with patch("xpyd.proxy.uvicorn.Server") as server:
+        ProxyServer(config).run_server()
+    listener = server.call_args.args[0]
+    assert listener.host == (host or "0.0.0.0")
+    assert listener.port == 18868
 
 
 def timing_samples(prefill, ttft, transfer, count=1):

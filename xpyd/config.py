@@ -141,6 +141,7 @@ class ProxyConfig(BaseModel):
     decode: List[str] = []
     instances: Optional[List[InstanceEntry]] = None
     models: Optional[List[Dict[str, Any]]] = None
+    host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "warning"
     first_token_source: Literal["prefill", "decode"] = "decode"
@@ -188,6 +189,16 @@ class ProxyConfig(BaseModel):
     # ------------------------------------------------------------------
     # Validators
     # ------------------------------------------------------------------
+
+    @field_validator("host")
+    @classmethod
+    def _valid_host(cls, value: str) -> str:
+        if value != "localhost":
+            try:
+                ipaddress.ip_address(value)
+            except ValueError as exc:
+                raise ValueError("host must be an IP address or localhost") from exc
+        return value
 
     @field_validator("port")
     @classmethod
@@ -432,6 +443,7 @@ class ProxyConfig(BaseModel):
             "tokenizer_path": None,
             "prefill": None,
             "decode": None,
+            "host": "0.0.0.0",
             "port": 8000,
             "roundrobin": False,
             "log_level": "warning",
