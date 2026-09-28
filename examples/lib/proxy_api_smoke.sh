@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Shared proxy API assertions used by the CPU example smoke tests.
 #
-# Source this file and call the smoke_* functions. It only depends on
-# PROXY_ENDPOINT and MODEL, so it works unchanged for aggregated and
+# Source this file and call the smoke_* functions. It depends on
+# PROXY_ENDPOINT, MODEL and BACKEND_LOG_DIR, and works for aggregated and
 # disaggregated topologies of any size, including phases where some nodes are
 # deliberately offline.
 #
@@ -16,6 +16,9 @@ MODEL="${MODEL:-facebook/opt-125m}"
 PROMETHEUS_VALIDATOR="$(
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 )/validate_prometheus_metrics.py"
+FORWARDING_VALIDATOR="$(
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+)/validate_forwarding.py"
 
 # Status of a JSON POST, discarding the body.
 post_status() {
@@ -33,17 +36,12 @@ assert_status() {
     }
 }
 
-# A passthrough endpoint must reach a backend. Any 5xx means the proxy itself
-# failed to route (no instance selected, unhandled exception, ...), which is the
-# regression these checks exist for. OPT-125M is a generative model, so the
-# pooling and scoring families legitimately answer 4xx from vLLM.
+# Unsupported model tasks may return 4xx, but only a new backend log entry
+# proves the request was forwarded rather than rejected by the proxy.
 assert_forwarded() {
-    local label=$1 actual=$2
-    (( actual >= 200 && actual < 500 )) || {
-        echo "ERROR: ${label} was not forwarded, proxy returned ${actual}." >&2
-        return 1
-    }
-    echo "  ${label} forwarded (HTTP ${actual})"
+    python "${FORWARDING_VALIDATOR}" --url "${PROXY_ENDPOINT}" \
+        --path "$1" --body "$2" \
+        --log-dir "${BACKEND_LOG_DIR:?Set BACKEND_LOG_DIR to the backend logs directory}"
 }
 
 smoke_chat_completion() {
@@ -272,30 +270,20 @@ assert "Hello proxy" in output["prompt"], output
 ' <<<"${detokenized}"
     echo "  /detokenize ok"
 
-    assert_forwarded "/v1/embeddings" "$(
-        post_status /v1/embeddings \
-            "{\"model\": \"${MODEL}\", \"input\": \"Hello proxy\"}"
-    )"
-    assert_forwarded "/pooling" "$(
-        post_status /pooling \
-            "{\"model\": \"${MODEL}\", \"messages\": \"Hello proxy\"}"
-    )"
+    assert_forwarded "/v1/embeddings" \
+        "{\"model\": \"${MODEL}\", \"input\": \"Hello proxy\"}"
+    assert_forwarded "/pooling" \
+        "{\"model\": \"${MODEL}\", \"messages\": \"Hello proxy\"}"
     for path in /score /v1/score; do
-        assert_forwarded "${path}" "$(
-            post_status "${path}" \
-                "{\"model\": \"${MODEL}\", \"text_1\": \"a\", \"text_2\": \"b\", \"predictions\": \"\"}"
-        )"
+        assert_forwarded "${path}" \
+            "{\"model\": \"${MODEL}\", \"text_1\": \"a\", \"text_2\": \"b\", \"predictions\": \"\"}"
     done
     for path in /rerank /v1/rerank /v2/rerank; do
-        assert_forwarded "${path}" "$(
-            post_status "${path}" \
-                "{\"model\": \"${MODEL}\", \"query\": \"a\", \"documents\": [\"b\"]}"
-        )"
+        assert_forwarded "${path}" \
+            "{\"model\": \"${MODEL}\", \"query\": \"a\", \"documents\": [\"b\"]}"
     done
-    assert_forwarded "/invocations" "$(
-        post_status /invocations \
-            "{\"model\": \"${MODEL}\", \"prompt\": \"Hello proxy\", \"max_tokens\": 1}"
-    )"
+    assert_forwarded "/invocations" \
+        "{\"model\": \"${MODEL}\", \"prompt\": \"Hello proxy\", \"max_tokens\": 1}"
 }
 
 smoke_passthrough_validation() {

@@ -12,6 +12,11 @@ Run it after installing the dependencies and model from the sibling
 ```
 
 The smoke test verifies exact round-robin P/D rotation, consistent-hash session
-affinity, cache-aware prefix affinity, concurrent load distribution for
-load-balanced and power-of-two scheduling, and P/D removal and re-addition for
-all five policies. Runtime output is written to the ignored `logs/` directory.
+affinity, cache-aware prefix affinity, concurrent inference for load-balanced
+and power-of-two scheduling, and P/D removal and re-addition for all five
+policies. Before each policy, the CPU-only
+[controlled harness](../../scheduler_semantics/README.md) verifies scheduling
+semantics, including deterministic avoidance of busy P and D nodes. This
+separates routing assertions from real NIXL inference without relying on
+small-sample distribution. Runtime output is written to ignored `logs/`
+directories.
