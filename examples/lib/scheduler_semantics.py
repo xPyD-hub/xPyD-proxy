@@ -50,6 +50,7 @@ def wait_for(predicate, process):
             if predicate():
                 return
         except urllib.error.URLError:
+            # Proxy not accepting connections yet; retry until the deadline.
             pass
         time.sleep(0.05)
     raise AssertionError("Timed out waiting for controlled scheduler state")
