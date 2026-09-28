@@ -14,6 +14,13 @@ The topology and scheduler workflows share this wheel cache independently of
 their pip/model cache. The first cold job still builds; concurrent cold jobs
 may each build before GitHub saves a successful cache.
 
+Source tags and distribution versions are tracked separately: upstream NIXL
+`v1.3.0` declares wheel version `1.2.0` in its `pyproject.toml`. The installer
+explicitly maps this pair, verifies the wheel version, and installs the matching
+dispatcher package. Both values enter the fingerprint, so a build from the
+`v1.2.0` source tag cannot be reused as a `v1.3.0` build. Override
+`NIXL_WHEEL_VERSION` when using source tags with different package metadata.
+
 Standard GitHub-hosted Linux runners do not provide GPUs. NIXL therefore must
 be built with UCX from source instead of using its CUDA-oriented PyPI quick
 install. The workflow caches the resulting wheel and caps each vLLM process at

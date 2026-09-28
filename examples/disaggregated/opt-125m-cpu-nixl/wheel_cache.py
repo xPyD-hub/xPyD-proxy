@@ -13,10 +13,11 @@ from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
 
-def fingerprint(nixl, vllm):
+def fingerprint(nixl, vllm, wheel_version=None):
     root = Path(__file__).resolve().parent
     inputs = {
         "nixl": str(Version(nixl.removeprefix("v"))),
+        "wheel_version": str(Version(wheel_version or nixl.removeprefix("v"))),
         "vllm_installer": vllm,
         "platform": (platform.system(), platform.machine()),
         "distribution": platform.freedesktop_os_release(),
@@ -48,14 +49,15 @@ def main():
     parser.add_argument("command", choices=("fingerprint", "select"))
     parser.add_argument("--nixl", required=True)
     parser.add_argument("--vllm", default="0.25.0")
+    parser.add_argument("--wheel-version")
     parser.add_argument("--directory", type=Path)
     args = parser.parse_args()
     if args.command == "fingerprint":
-        print(fingerprint(args.nixl, args.vllm))
+        print(fingerprint(args.nixl, args.vllm, args.wheel_version))
     else:
         if args.directory is None:
             parser.error("select requires --directory")
-        print(cached_wheel(args.directory, args.nixl))
+        print(cached_wheel(args.directory, args.wheel_version or args.nixl))
 
 
 if __name__ == "__main__":

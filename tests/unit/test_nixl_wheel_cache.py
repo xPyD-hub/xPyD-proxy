@@ -56,6 +56,19 @@ def test_fingerprint_tracks_versions_and_abi():
         assert baseline != fingerprint("v1.3.0", "0.25.0")
 
 
+def test_source_tag_and_distribution_version_are_independent(tmp_path):
+    fingerprint = CACHE["fingerprint"]
+    assert fingerprint("v1.3.0", "0.25.0", "1.2.0") != fingerprint(
+        "v1.2.0", "0.25.0", "1.2.0"
+    )
+    assert fingerprint("v1.3.0", "0.25.0", "1.2.0") != fingerprint(
+        "v1.3.0", "0.25.0", "1.3.0"
+    )
+    wheel = tmp_path / "nixl_cu12-1.2.0-py3-none-any.whl"
+    wheel.touch()
+    assert SELECT(tmp_path, "1.2.0") == str(wheel)
+
+
 def test_workflows_share_nixl_cache_key():
     import yaml
 
