@@ -4,4 +4,5 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-exec xpyd proxy --config "${SCRIPT_DIR}/xpyd_mixed.yaml"
+exec bash "${SCRIPT_DIR}/../../lib/run_proxy.sh" proxy \
+    --config "${SCRIPT_DIR}/xpyd_mixed.yaml"
