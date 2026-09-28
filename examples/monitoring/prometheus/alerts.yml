@@ -1,0 +1,10 @@
+groups:
+  - name: xpyd-demo
+    rules:
+      - alert: XPyDProxyDown
+        expr: up{job="xpyd-demo"} == 0
+        for: 5s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The example proxy cannot be scraped"

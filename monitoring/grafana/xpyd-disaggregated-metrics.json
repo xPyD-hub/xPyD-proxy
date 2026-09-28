@@ -23,7 +23,8 @@
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
     },
     {
-      "title": "TTFT Distribution",
+      "title": "Proxy TTFT Distribution (Approximate)",
+      "description": "Proxy request start to the first decode HTTP chunk for decode-first requests; prefill-first uses completion of the prefill HTTP response. HTTP chunks are not semantic tokens.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
@@ -43,7 +44,8 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     },
     {
-      "title": "TPOT Distribution",
+      "title": "TPOT Distribution (Approximate)",
+      "description": "Estimated from HTTP chunk count, not exact generated token count.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
@@ -63,7 +65,8 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     },
     {
-      "title": "KV Transfer Time Distribution",
+      "title": "Estimated KV Transfer Time Distribution",
+      "description": "Per-request gap from complete prefill HTTP response to first decode HTTP chunk. Includes decode waiting and first-token computation; not pure transport time. Do not subtract histogram percentiles.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [

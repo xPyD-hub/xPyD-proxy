@@ -59,14 +59,15 @@ def get_metrics() -> bytes:
 
 proxy_prefill_duration_seconds = Histogram(
     "proxy_prefill_duration_seconds",
-    "Prefill node response time in seconds",
+    "Proxy-observed time from request start to completed prefill HTTP response",
     ["prefill_instance", "decode_instance", "model"],
     registry=REGISTRY,
 )
 
 proxy_kv_transfer_duration_seconds = Histogram(
     "proxy_kv_transfer_duration_seconds",
-    "Estimated KV transfer time: T(decode_first_token) - T(prefill_response)",
+    "Estimated KV transfer time: decode first HTTP chunk minus prefill HTTP "
+    "response completion; includes decode waiting and first-token computation",
     ["prefill_instance", "decode_instance", "model"],
     registry=REGISTRY,
 )
@@ -80,7 +81,8 @@ proxy_decode_duration_seconds = Histogram(
 
 proxy_ttft_seconds = Histogram(
     "proxy_ttft_seconds",
-    "End-to-end time to first token (user-perceived) in seconds",
+    "Proxy-observed TTFT approximation: request start to decode first HTTP "
+    "chunk, or prefill HTTP response completion for prefill-first requests",
     ["prefill_instance", "decode_instance", "model"],
     registry=REGISTRY,
 )

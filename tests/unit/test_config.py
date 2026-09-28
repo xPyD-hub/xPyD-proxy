@@ -20,6 +20,7 @@ class TestProxyConfigValidation:
         assert cfg.prefill == []
         assert cfg.decode == ["10.0.0.1:8000"]
         assert cfg.port == 8000
+        assert cfg.host == "0.0.0.0"
         assert cfg.first_token_source == "decode"
 
     def test_nixl_disaggregated_mode(self):
@@ -62,6 +63,18 @@ class TestProxyConfigValidation:
     def test_port_too_low(self):
         with pytest.raises(ValueError, match="port must be between"):
             ProxyConfig(model="m", decode=["10.0.0.1:8000"], port=0)
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", "0.0.0.0"])
+    def test_listen_host_from_yaml_and_legacy_args(self, tmp_path, host):
+        config = tmp_path / "proxy.yaml"
+        config.write_text(f'host: "{host}"\nmodel: m\ndecode: ["127.0.0.1:8000"]\n')
+        assert ProxyConfig.from_yaml(config).host == host
+        assert ProxyConfig.from_args(argparse.Namespace(config=config)).host == host
+
+    @pytest.mark.parametrize("host", ["", "http://localhost", "127.0.0.1:8000"])
+    def test_invalid_listen_host(self, host):
+        with pytest.raises(ValueError, match="host must be an IP address or localhost"):
+            ProxyConfig(model="m", decode=["127.0.0.1:8000"], host=host)
 
     def test_port_too_high(self):
         with pytest.raises(ValueError, match="port must be between"):
