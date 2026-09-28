@@ -36,9 +36,13 @@ from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_respon
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
 from xpyd.routes import register_routes
-from xpyd.scheduler import LoadBalancedScheduler as LoadBalancedScheduler
+from xpyd.scheduler import (  # noqa: F401 - legacy xpyd.proxy import compatibility
+    LoadBalancedScheduler as LoadBalancedScheduler,
+)
 from xpyd.scheduler import Reservation
-from xpyd.scheduler import RoundRobinSchedulingPolicy as RoundRobinSchedulingPolicy
+from xpyd.scheduler import (  # noqa: F401 - legacy xpyd.proxy import compatibility
+    RoundRobinSchedulingPolicy as RoundRobinSchedulingPolicy,
+)
 from xpyd.scheduler import (
     Scheduler,
     SchedulingContext,
