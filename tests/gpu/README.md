@@ -37,6 +37,12 @@ The aggregated scheduler matrix also runs the CPU-only
 These hold a request at a known backend to check busy-node avoidance; real
 inference remains a separate check rather than a probabilistic routing assertion.
 
+All GPU proxy configurations, including generated 8P8D matrix configurations,
+enable periodic backend health checks with a two-second interval and timeout.
+Unhealthy nodes are excluded from scheduling and healthy nodes become eligible
+again after discovery and health monitoring succeed. Startup readiness alone
+does not substitute for these ongoing checks.
+
 Use `--list` to inspect all cases, `--case NAME` to select one or more cases,
 or `--all` to include the LMCache and NIXL 2P2D and 8P8D matrices:
 

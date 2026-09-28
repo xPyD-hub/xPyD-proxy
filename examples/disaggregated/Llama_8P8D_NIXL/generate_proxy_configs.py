@@ -31,6 +31,11 @@ for source in ("prefill", "decode"):
             "scheduling": scheduler,
             "disaggregated_mode": "nixl",
             "first_token_source": source,
+            "health_check": {
+                "enabled": True,
+                "interval_seconds": 2,
+                "timeout_seconds": 2,
+            },
             "startup": {
                 "wait_timeout_seconds": 1200,
                 "probe_interval_seconds": 2,
