@@ -69,7 +69,7 @@ jobs:
       MODEL_PATH: ${{ vars.ACCELERATOR_MODEL_PATH }}
       DEVICE: ${{ inputs.device }}
       TARGET_SHA: ${{ needs.prepare.outputs.sha }}
-      LOG_DIR: ${{ runner.temp }}/accelerator-${{ github.run_id }}-${{ github.run_attempt }}
+      LOG_DIR: ${{ github.workspace }}/examples/accelerator_lifecycle/logs/ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
         with:
