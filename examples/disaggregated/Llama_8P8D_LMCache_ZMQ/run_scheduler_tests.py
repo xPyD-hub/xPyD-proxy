@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -44,11 +45,13 @@ def main() -> None:
         with (ROOT / "proxy_logs" / f"{scheduler}.log").open("wb") as log:
             process = subprocess.Popen(
                 [
-                    "xpyd",
+                    "bash",
+                    str(ROOT.parents[1] / "lib/run_proxy.sh"),
                     "proxy",
                     "--config",
                     str(ROOT / f"xpyd_{scheduler}.yaml"),
                 ],
+                env={**os.environ, "PYTHON": sys.executable},
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
