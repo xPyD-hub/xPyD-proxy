@@ -2,8 +2,6 @@
 """Tests for the admin routes (``/status`` and ``/instances/add``)."""
 
 # Standard
-import itertools
-import threading
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -30,9 +28,6 @@ class _AdminServer:
     ) -> None:
         self.prefill_instances = list(prefill or [])
         self.decode_instances = list(decode or [])
-        self.prefill_cycler = itertools.cycle(self.prefill_instances or [""])
-        self.decode_cycler = itertools.cycle(self.decode_instances or [""])
-        self.scheduling_policy = type("_Policy", (), {"lock": threading.Lock()})()
         self.validate_instance = AsyncMock(return_value=valid)
         self.drain_and_remove_instance = AsyncMock()
 
@@ -43,7 +38,6 @@ class _AdminServer:
             if address in instances:
                 raise ValueError("Instance already exists")
             instances.append(address)
-            setattr(self, f"{role}_cycler", itertools.cycle(instances))
             return True
 
         self.add_instance = AsyncMock(side_effect=_add_instance)
@@ -108,10 +102,8 @@ def test_absent_api_key_header_is_rejected(admin_key: str) -> None:
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])
-def test_instance_is_added_and_immediately_schedulable(
-    admin_key: str, role: str
-) -> None:
-    """A newly added instance joins the role list and its scheduling cycler."""
+def test_instance_is_added_to_role_membership(admin_key: str, role: str) -> None:
+    """The admin route delegates membership changes to the proxy."""
     server = _AdminServer(prefill=["127.0.0.1:8100"], decode=["127.0.0.1:8200"])
     new_instance = "127.0.0.2:8300"
 
@@ -120,8 +112,6 @@ def test_instance_is_added_and_immediately_schedulable(
     assert response.status_code == 200
     instances = getattr(server, f"{role}_instances")
     assert new_instance in instances
-    cycler = getattr(server, f"{role}_cycler")
-    assert new_instance in {next(cycler) for _ in range(len(instances))}
     server.add_instance.assert_awaited_once_with(role, new_instance)
 
 

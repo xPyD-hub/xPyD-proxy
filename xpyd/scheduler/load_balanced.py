@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Load-balanced scheduling policy."""
 
-import itertools
 import logging
 from typing import Optional, Sequence
 
@@ -79,20 +78,12 @@ class LoadBalancedScheduler(SchedulingPolicy):
                 if context.role == "prefill"
                 else self._schedule_decode
             )
-            return select(
-                context.request_len, context.max_tokens, context.model, available
-            )
+            return select(context.request_len, context.max_tokens, available)
 
     def on_instance_added(self, role, address, max_model_len):
-        if role != "aggregated":
-            self.add_instance_state(role, max_model_len)
-
-    def on_instance_removed(self, role, address, index):
-        if role != "aggregated":
-            self.remove_instance_state(role, index)
-
-    def add_instance_state(self, role: str, max_model_len: int) -> None:
-        """Extend load-tracking arrays after a runtime instance is appended."""
+        """Extend load-tracking arrays before shared membership is appended."""
+        if role == "aggregated":
+            return
         with self.lock:
             if role == "prefill":
                 self.prefill_utils_counter.append(0)
@@ -103,8 +94,10 @@ class LoadBalancedScheduler(SchedulingPolicy):
                 self.decode_bs_counter.append(0)
                 self.decode_model_len.append(max_model_len)
 
-    def remove_instance_state(self, role: str, index: int) -> None:
+    def on_instance_removed(self, role, address, index):
         """Remove load-tracking entries before a runtime instance is deleted."""
+        if role == "aggregated":
+            return
         with self.lock:
             if role == "prefill":
                 del self.prefill_utils_counter[index]
@@ -115,31 +108,12 @@ class LoadBalancedScheduler(SchedulingPolicy):
                 del self.decode_bs_counter[index]
                 del self.decode_model_len[index]
 
-    def schedule(
-        self,
-        cycler: itertools.cycle,
-        is_prompt: Optional[bool] = None,
-        request_len: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        model: str = "",
-        **kwargs,
-    ) -> Optional[str]:
-        with self.lock:
-            if is_prompt:
-                return self._schedule_prefill(request_len, max_tokens, model)
-            else:
-                return self._schedule_decode(request_len, max_tokens, model)
-
-    def _schedule_prefill(self, request_len, max_tokens, model="", available=None):
-        if available is None and self._registry is not None:
-            available = set(
-                self._registry.get_available_instances("prefill", model=model)
-            )
+    def _schedule_prefill(self, request_len, max_tokens, available):
         candidates = [
             i
             for i, max_len in enumerate(self.prefill_model_len)
             if request_len + max_tokens <= max_len
-            and (available is None or self.prefill_instances[i] in available)
+            and self.prefill_instances[i] in available
         ]
         if not candidates:
             logger.warning(
@@ -166,16 +140,12 @@ class LoadBalancedScheduler(SchedulingPolicy):
         )
         return self.prefill_instances[min_index]
 
-    def _schedule_decode(self, request_len, max_tokens, model="", available=None):
-        if available is None and self._registry is not None:
-            available = set(
-                self._registry.get_available_instances("decode", model=model)
-            )
+    def _schedule_decode(self, request_len, max_tokens, available):
         candidates = [
             i
             for i, max_len in enumerate(self.decode_model_len)
             if request_len + max_tokens <= max_len
-            and (available is None or self.decode_instances[i] in available)
+            and self.decode_instances[i] in available
         ]
         if not candidates:
             logger.warning(
@@ -213,17 +183,12 @@ class LoadBalancedScheduler(SchedulingPolicy):
         )
         return self.decode_instances[min_index]
 
-    def schedule_completion(
-        self,
-        prefill_instance: Optional[str] = None,
-        decode_instance: Optional[str] = None,
-        req_len: Optional[int] = None,
-    ) -> None:
+    def on_request_finished(self, context: SchedulingContext, address: str) -> None:
         with self.lock:
-            if prefill_instance:
-                self._complete_prefill(prefill_instance, req_len)
-            if decode_instance:
-                self._complete_decode(decode_instance, req_len)
+            if context.role == "prefill":
+                self._complete_prefill(address, context.request_len)
+            elif context.role == "decode":
+                self._complete_decode(address, context.request_len)
 
     def _complete_prefill(self, prefill_instance, req_len):
         index = self.prefill_instances.index(prefill_instance)

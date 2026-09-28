@@ -60,22 +60,17 @@ class _RequestReservation:
         self.prefill = prefill
         self.decode = decode
 
-    def exception_handler(
-        self,
-        prefill_instance: str | None = None,
-        decode_instance: str | None = None,
-        req_len: int | None = None,
-    ) -> None:
-        if prefill_instance is not None and self.prefill is not None:
+    def release_prefill(self) -> None:
+        if self.prefill is not None:
             self.prefill.release()
-        if decode_instance is not None and self.decode is not None:
+
+    def release_decode(self) -> None:
+        if self.decode is not None:
             self.decode.release()
 
     def release_all(self) -> None:
-        if self.prefill is not None:
-            self.prefill.release()
-        if self.decode is not None:
-            self.decode.release()
+        self.release_prefill()
+        self.release_decode()
 
 
 # ---------------------------------------------------------------------------
@@ -372,10 +367,7 @@ async def _zmq_stream_usage_generator(decode_generator):
 async def _zmq_stream_generator(
     prefill_output: dict,
     decode_generator,
-    server: Proxy,
-    prefill_instance: str,
-    decode_instance: str,
-    request_len: int,
+    reservation: _RequestReservation,
     is_chat: bool = False,
 ):
     """Return the P token followed by every streamed D token."""
@@ -416,20 +408,13 @@ async def _zmq_stream_generator(
         async for chunk in generator:
             yield chunk
     finally:
-        server.exception_handler(
-            prefill_instance=prefill_instance,
-            decode_instance=decode_instance,
-            req_len=request_len,
-        )
+        reservation.release_all()
 
 
 async def _zmq_nonstream_generator(
     prefill_output: dict,
     decode_generator,
-    server: Proxy,
-    prefill_instance: str,
-    decode_instance: str,
-    request_len: int,
+    reservation: _RequestReservation,
     is_chat: bool = False,
 ):
     """Merge the P token into the non-streaming D response."""
@@ -448,19 +433,12 @@ async def _zmq_nonstream_generator(
             output = _completion_to_chat(output)
         yield json.dumps(output, separators=(",", ":")).encode()
     finally:
-        server.exception_handler(
-            prefill_instance=prefill_instance,
-            decode_instance=decode_instance,
-            req_len=request_len,
-        )
+        reservation.release_all()
 
 
 async def _zmq_prefill_only_generator(
     prefill_output: dict,
-    server: Proxy,
-    prefill_instance: str,
-    decode_instance: str,
-    request_len: int,
+    reservation: _RequestReservation,
     is_chat: bool,
     stream: bool,
     include_usage: bool,
@@ -517,11 +495,7 @@ async def _zmq_prefill_only_generator(
             yield (f"data: {json.dumps(usage, separators=(',', ':'))}\n\n").encode()
         yield b"data: [DONE]\n\n"
     finally:
-        server.exception_handler(
-            prefill_instance=prefill_instance,
-            decode_instance=decode_instance,
-            req_len=request_len,
-        )
+        reservation.release_all()
 
 
 async def handle_completion(
@@ -835,9 +809,6 @@ async def handle_completion(
             final_generator = _zmq_prefill_only_generator(
                 prefill_output,
                 reservation,
-                prefill_instance,
-                decode_instance,
-                total_length,
                 is_chat,
                 request.get("stream", False),
                 request.get("stream_options", {}).get("include_usage", False),
@@ -866,9 +837,6 @@ async def handle_completion(
                         prefill_output,
                         generator_d,
                         reservation,
-                        prefill_instance,
-                        decode_instance,
-                        total_length,
                         is_chat,
                     )
                 else:
@@ -876,9 +844,6 @@ async def handle_completion(
                         prefill_output,
                         generator_d,
                         reservation,
-                        prefill_instance,
-                        decode_instance,
-                        total_length,
                         is_chat,
                     )
                 first_token_from_p = True
@@ -906,10 +871,8 @@ async def handle_completion(
                 final_generator = generator_class(
                     generator_p,
                     generator_d,
-                    reservation,
-                    prefill_instance,
-                    decode_instance,
-                    req_len=total_length,
+                    reservation.release_prefill,
+                    reservation.release_decode,
                 )
         media_type = (
             "text/event-stream" if request.get("stream", False) else "application/json"

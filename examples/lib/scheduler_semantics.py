@@ -65,7 +65,12 @@ def assert_avoids_busy(selections, busy):
 
 def affinity_cases(topology, strategy, instances):
     sys.path.insert(0, str(ROOT))
-    from xpyd.scheduler import CacheAwarePolicy, ConsistentHashPolicy
+    from xpyd.scheduler import (
+        CacheAwarePolicy,
+        Candidate,
+        ConsistentHashPolicy,
+        SchedulingContext,
+    )
 
     candidates = {
         role: {node["address"] for node in instances if node["role"] == role}
@@ -93,10 +98,9 @@ def affinity_cases(topology, strategy, instances):
         words = ["hello" if index & (1 << bit) else "world" for bit in range(12)]
         prefix = (" ".join(words) + " ") * 32
         expected = {
-            role: (
-                policy.select_from(nodes, header=session)
-                if strategy == "consistent_hash"
-                else policy.select_from(nodes, prompt=prefix)
+            role: policy.select_node(
+                SchedulingContext(role=role, header=session, prompt=prefix),
+                [Candidate(address) for address in sorted(nodes)],
             )
             for role, nodes in candidates.items()
         }

@@ -187,15 +187,53 @@ def test_configured_hash_options_reach_aggregated_policy(tmp_path):
     lease.release()
 
 
-def test_explicit_policy_class_uses_common_factory():
+def test_configuration_selects_policy_through_common_factory():
     from xpyd.proxy import _create_scheduling_policy
     from xpyd.scheduler import RoundRobinSchedulingPolicy
 
     config = ProxyConfig(
-        model="demo", prefill=["127.0.0.1:18101"], decode=["127.0.0.1:18102"]
+        model="demo",
+        prefill=["127.0.0.1:18101"],
+        decode=["127.0.0.1:18102"],
+        scheduling="roundrobin",
     )
-    policy = _create_scheduling_policy(config, RoundRobinSchedulingPolicy)
+    policy = _create_scheduling_policy(config)
     assert isinstance(policy, RoundRobinSchedulingPolicy)
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_only_unified_policy_entry_points_are_exposed(model_lengths, strategy):
+    policy = default_registry.build(strategy)
+    for name in (
+        "schedule",
+        "schedule_completion",
+        "select",
+        "select_from",
+        "add_worker",
+        "remove_worker",
+        "add_instance_state",
+        "remove_instance_state",
+    ):
+        assert not hasattr(policy, name)
+
+
+def test_no_proxy_scheduler_compatibility_exports_or_adapters():
+    import xpyd.proxy as proxy_module
+
+    for name in ("RoundRobinSchedulingPolicy", "LoadBalancedScheduler"):
+        assert not hasattr(proxy_module, name)
+    for name in (
+        "schedule",
+        "schedule_completion",
+        "schedule_aggregated",
+        "schedule_aggregated_completion",
+        "on_done",
+        "exception_handler",
+    ):
+        assert not hasattr(Proxy, name)
+    assert not hasattr(Scheduler, "remember")
+    assert not hasattr(Scheduler, "finish")
+    assert not hasattr(default_registry, "create")
 
 
 def test_legacy_roundrobin_flag_is_not_a_strategy_options_mapping(tmp_path):

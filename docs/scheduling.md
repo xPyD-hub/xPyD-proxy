@@ -216,9 +216,17 @@ load against the wrong policy. Releasing a reservation does not record success
 or failure; the request executor handles outcomes separately.
 
 The proxy uses this same contract for aggregated and P/D requests. It does not
-branch on concrete strategy types. Legacy `schedule()` / `schedule_completion()`
-entry points remain for existing callers; new request code should retain and
-release reservation objects instead of tracking only node addresses.
+branch on concrete strategy types. Request code calls `Proxy.reserve(context)`
+and retains the returned reservation until it can call `release()`.
+
+This is a breaking Python API change, with no compatibility adapters:
+`schedule()`, `schedule_completion()`, aggregated scheduling wrappers, policy
+`select()` / `select_from()`, and cyclers have been removed. Construct policies
+with `default_registry.build(...)`, not `PolicyRegistry.create()` or an explicit
+policy class passed to `ProxyServer`. Import policy classes from `xpyd.scheduler`,
+not `xpyd.proxy`. All policy selection and membership changes use the interface
+above; active-request accounting belongs to the runtime, not to a second set of
+power-of-two counters.
 
 ### Adding a policy
 

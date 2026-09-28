@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import threading
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import Optional, Sequence
 
 from xpyd.registry import InstanceRegistry
@@ -47,7 +47,6 @@ class Scheduler:
         self.registry = registry
         self.lock = threading.RLock()
         self._active: dict[str, int] = defaultdict(int)
-        self._legacy: dict[tuple[str, str, int], deque[Reservation]] = {}
 
     def reserve(
         self,
@@ -84,27 +83,3 @@ class Scheduler:
                 self.registry.increment_active_requests(address)
             self._active[address] += 1
             return Reservation(self, policy, context, address)
-
-    def remember(self, reservation: Optional[Reservation]) -> Optional[str]:
-        """Adapt the legacy address-returning Proxy scheduling API."""
-        if reservation is None:
-            return None
-        key = (
-            reservation.context.role,
-            reservation.address,
-            reservation.context.request_len,
-        )
-        with self.lock:
-            self._legacy.setdefault(key, deque()).append(reservation)
-        return reservation.address
-
-    def finish(self, role: str, address: str, request_len: int) -> None:
-        with self.lock:
-            key = (role, address, request_len)
-            pending = self._legacy.get(key)
-            if not pending:
-                raise ValueError(f"No scheduling reservation for {key!r}")
-            pending[0].release()
-            pending.popleft()
-            if not pending:
-                del self._legacy[key]

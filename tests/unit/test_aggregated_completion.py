@@ -45,8 +45,10 @@ def test_model_topology_detection():
 def test_auto_discovered_aggregated_model():
     proxy = make_proxy()
     proxy.aggregated_instances = {"": list(NODES)}
-    assert proxy.schedule_aggregated(MODEL) in NODES
-    assert proxy.schedule_aggregated("unknown") is None
+    lease = proxy.reserve(SchedulingContext(role="aggregated", model=MODEL))
+    assert lease.address in NODES
+    lease.release()
+    assert proxy.reserve(SchedulingContext(role="aggregated", model="unknown")) is None
 
 
 @pytest.mark.parametrize(
@@ -59,10 +61,13 @@ def test_auto_discovered_aggregated_model():
 )
 def test_round_robin_dispatch(global_strategy, override):
     proxy = make_proxy(global_strategy, override)
-    selected = [proxy.schedule_aggregated(MODEL) for _ in range(4)]
-    assert selected == NODES * 2
-    for address in selected:
-        proxy.schedule_aggregated_completion(address)
+    leases = [
+        proxy.reserve(SchedulingContext(role="aggregated", model=MODEL))
+        for _ in range(4)
+    ]
+    assert [lease.address for lease in leases] == NODES * 2
+    for lease in leases:
+        lease.release()
     assert all(proxy.registry.get_active_requests(address) == 0 for address in NODES)
 
 
@@ -79,18 +84,29 @@ def test_round_robin_dispatch(global_strategy, override):
 def test_load_aware_dispatch(global_strategy, override):
     proxy = make_proxy(global_strategy, override)
     proxy.registry.increment_active_requests(NODES[0])
-    assert proxy.schedule_aggregated(MODEL) == NODES[1]
+    lease = proxy.reserve(SchedulingContext(role="aggregated", model=MODEL))
+    assert lease.address == NODES[1]
+    lease.release()
 
 
 @pytest.mark.parametrize("strategy", ["consistent_hash", "cache_aware"])
 def test_affinity_dispatch(strategy):
     proxy = make_proxy(override=strategy)
-    selected = [
-        proxy.schedule_aggregated(MODEL, header="same-session", prompt="same prefix")
+    leases = [
+        proxy.reserve(
+            SchedulingContext(
+                role="aggregated",
+                model=MODEL,
+                header="same-session",
+                prompt="same prefix",
+            )
+        )
         for _ in range(3)
     ]
-    assert len(set(selected)) == 1
-    assert selected[0] in NODES
+    assert len({lease.address for lease in leases}) == 1
+    assert leases[0].address in NODES
+    for lease in leases:
+        lease.release()
 
 
 @pytest.mark.parametrize("registry", [True, False])

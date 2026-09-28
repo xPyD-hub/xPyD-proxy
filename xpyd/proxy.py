@@ -14,7 +14,6 @@ non-streaming).
 
 import argparse
 import asyncio
-import itertools
 import json
 import logging
 import os
@@ -37,20 +36,12 @@ from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
 from xpyd.routes import register_routes
 from xpyd.scheduler import (
-    LoadBalancedScheduler,
     Reservation,
-    RoundRobinSchedulingPolicy,
     Scheduler,
     SchedulingContext,
     SchedulingPolicy,
     default_registry,
 )
-
-# Re-export the concrete policies from ``xpyd.proxy`` as well: scheduler
-# construction moved behind the registry, but legacy callers importing these
-# names from this module keep working. Listing them in ``__all__`` marks the
-# re-exports as intentional for linters and CodeQL.
-__all__ = ["LoadBalancedScheduler", "RoundRobinSchedulingPolicy"]
 
 
 class _ExtraFormatter(logging.Formatter):
@@ -94,10 +85,8 @@ AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(
 async def P_first_token_generator(
     generator_p: AsyncGenerator[bytes, None],
     generator_d: AsyncGenerator[bytes, None],
-    callback_owner: Optional["Proxy"] = None,
-    prefill_instance: Optional[str] = None,
-    decode_instance: Optional[str] = None,
-    req_len: Optional[int] = None,
+    release_prefill: Callable[[], None],
+    release_decode: Callable[[], None],
 ) -> AsyncGenerator[bytes, None]:
     first_decode = True
 
@@ -105,10 +94,7 @@ async def P_first_token_generator(
         async for chunk in generator_p:
             yield chunk
     finally:
-        if callback_owner:
-            callback_owner.exception_handler(
-                prefill_instance=prefill_instance, decode_instance=None, req_len=req_len
-            )
+        release_prefill()
 
     try:
         async for chunk in generator_d:
@@ -117,37 +103,26 @@ async def P_first_token_generator(
                 continue
             yield chunk
     finally:
-        if callback_owner:
-            callback_owner.exception_handler(
-                prefill_instance=None, decode_instance=decode_instance, req_len=req_len
-            )
+        release_decode()
 
 
 async def D_first_token_generator(
     generator_p: AsyncGenerator[bytes, None],
     generator_d: AsyncGenerator[bytes, None],
-    callback_owner: Optional["Proxy"] = None,
-    prefill_instance: Optional[str] = None,
-    decode_instance: Optional[str] = None,
-    req_len: Optional[int] = None,
+    release_prefill: Callable[[], None],
+    release_decode: Callable[[], None],
 ) -> AsyncGenerator[bytes, None]:
     try:
         async for _ in generator_p:
             continue
     finally:
-        if callback_owner:
-            callback_owner.exception_handler(
-                prefill_instance=prefill_instance, decode_instance=None, req_len=req_len
-            )
+        release_prefill()
 
     try:
         async for chunk in generator_d:
             yield chunk
     finally:
-        if callback_owner:
-            callback_owner.exception_handler(
-                prefill_instance=None, decode_instance=decode_instance, req_len=req_len
-            )
+        release_decode()
 
 
 class Proxy:
@@ -176,8 +151,6 @@ class Proxy:
     ):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
-        self.prefill_cycler = itertools.cycle(prefill_instances)
-        self.decode_cycler = itertools.cycle(decode_instances)
         self.model = model
         self.scheduling_policy = scheduling_policy
         self.registry = registry
@@ -295,12 +268,6 @@ class Proxy:
                 return discovered
         return list(self.aggregated_instances.get(model, []))
 
-    def schedule_aggregated(self, model: str, **kwargs) -> Optional[str]:
-        """Compatibility wrapper for the address-returning scheduling API."""
-        return self._scheduler.remember(
-            self.reserve(SchedulingContext(role="aggregated", model=model, **kwargs))
-        )
-
     def _get_aggregated_policy(
         self,
         model: str,
@@ -346,22 +313,6 @@ class Proxy:
             if self.uses_round_robin_fallback(context.model):
                 policy = self._round_robin_policy
             return self._scheduler.reserve(policy, context, instances)
-
-    def schedule_aggregated_completion(
-        self,
-        instance: str,
-        req_len: Optional[int] = None,
-    ) -> None:
-        """Release a reservation made by the legacy address-returning API."""
-        self._scheduler.finish("aggregated", instance, req_len or 0)
-
-    def on_done(
-        self,
-        prefill_instance: Optional[str] = None,
-        decode_instance: Optional[str] = None,
-        req_len: Optional[int] = None,
-    ) -> None:
-        self.schedule_completion(prefill_instance, decode_instance, req_len=req_len)
 
     def setup_routes(self) -> None:
         register_routes(self.router, self)
@@ -429,36 +380,6 @@ class Proxy:
                     detail="Internal proxy error",
                 ) from e
 
-    def schedule(
-        self,
-        cycler: itertools.cycle,
-        is_prompt: int = None,
-        request_len: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs,
-    ) -> Optional[str]:
-        return self._scheduler.remember(
-            self.reserve(
-                SchedulingContext(
-                    role="prefill" if is_prompt else "decode",
-                    request_len=request_len or 0,
-                    max_tokens=max_tokens or 0,
-                    **kwargs,
-                )
-            )
-        )
-
-    def schedule_completion(
-        self,
-        prefill_instance: Optional[str] = None,
-        decode_instance: Optional[str] = None,
-        req_len: Optional[int] = None,
-    ) -> None:
-        if prefill_instance:
-            self._scheduler.finish("prefill", prefill_instance, req_len or 0)
-        if decode_instance:
-            self._scheduler.finish("decode", decode_instance, req_len or 0)
-
     async def drain_and_remove_instance(
         self,
         role: str,
@@ -505,10 +426,6 @@ class Proxy:
                     index = instances.index(address)
                     self.scheduling_policy.on_instance_removed(role, address, index)
                     instances.remove(address)
-                    if role == "prefill":
-                        self.prefill_cycler = itertools.cycle(self.prefill_instances)
-                    else:
-                        self.decode_cycler = itertools.cycle(self.decode_instances)
 
                 if self.health_monitor is not None:
                     self.health_monitor.remove_node(address)
@@ -564,10 +481,6 @@ class Proxy:
                 policy.on_instance_added(role, address, max_model_len)
                 policy_added = True
             instances.append(address)
-            if role == "prefill":
-                self.prefill_cycler = itertools.cycle(self.prefill_instances)
-            elif role == "decode":
-                self.decode_cycler = itertools.cycle(self.decode_instances)
             if self.health_monitor is not None:
                 self.health_monitor.add_node(address)
             if self.discovery is not None:
@@ -581,10 +494,6 @@ class Proxy:
                 policy.on_instance_removed(role, address, index)
             if address in instances:
                 instances.remove(address)
-            if role == "prefill":
-                self.prefill_cycler = itertools.cycle(self.prefill_instances)
-            elif role == "decode":
-                self.decode_cycler = itertools.cycle(self.decode_instances)
             if role == "aggregated" and not instances:
                 self.aggregated_instances.pop(model, None)
             self.registry.remove(address)
@@ -667,29 +576,6 @@ class Proxy:
                 detail=f"Backend tokenizer at {url} returned no tokens",
             )
         return tokens
-
-    def exception_handler(
-        self,
-        prefill_instance: Optional[str] = None,
-        decode_instance: Optional[str] = None,
-        req_len: Optional[int] = None,
-    ) -> None:
-        if prefill_instance or decode_instance:
-            try:
-                self.on_done(
-                    prefill_instance=prefill_instance,
-                    decode_instance=decode_instance,
-                    req_len=req_len,
-                )
-                # Record success with registry for circuit breaker tracking
-                if self.registry is not None:
-                    if prefill_instance:
-                        self.registry.record_success(prefill_instance)
-                    if decode_instance:
-                        self.registry.record_success(decode_instance)
-            except Exception as e:
-                logger.error(f"Error releasing instances: {e}")
-                raise
 
     def _record_failure(
         self,
@@ -883,28 +769,13 @@ class Proxy:
 
 def _create_scheduling_policy(
     config: ProxyConfig,
-    scheduling_policy_cls: Optional[type] = None,
     registry: Optional[InstanceRegistry] = None,
     all_prefill: Optional[list[str]] = None,
     all_decode: Optional[list[str]] = None,
 ) -> SchedulingPolicy:
-    """Instantiate a scheduling policy from config or explicit class.
-
-    When *scheduling_policy_cls* is provided (legacy path), it is used
-    directly.  Otherwise the ``config.scheduling`` string selects the
-    policy via :data:`default_registry`.
-    """
+    """Instantiate the configured strategy through the common policy factory."""
     prefill = all_prefill if all_prefill is not None else config.prefill
     decode = all_decode if all_decode is not None else config.decode
-
-    # Legacy explicit-class path (used by existing tests and CLI --roundrobin)
-    if scheduling_policy_cls is not None:
-        return scheduling_policy_cls.from_config(
-            prefill_instances=prefill,
-            decode_instances=decode,
-            workers=list(prefill) + list(decode),
-            registry=registry,
-        )
 
     strategy = config.scheduling
     strategy_opts = config.scheduling_config.get(strategy, {})
@@ -924,7 +795,6 @@ class ProxyServer:
     def __init__(
         self,
         config: ProxyConfig,
-        scheduling_policy: Optional[SchedulingPolicy] = None,
         create_completion: Optional[Callable[[Request], StreamingResponse]] = None,
         create_chat_completion: Optional[Callable[[Request], StreamingResponse]] = None,
     ):
@@ -983,7 +853,7 @@ class ProxyServer:
                     self.registry.add("aggregated", addr, model=entry.model)
                     _registered_aggregated.add(addr)
                     aggregated_instances.setdefault(entry.model, []).append(addr)
-            # Derive de-duplicated prefill/decode lists for scheduler compat
+            # Derive de-duplicated prefill/decode membership.
             seen_p: set[str] = set()
             seen_d: set[str] = set()
             all_prefill: list[str] = []
@@ -1035,8 +905,7 @@ class ProxyServer:
                 self.registry.mark_healthy(addr)
 
         # Build per-model scheduler config from models shorthand.
-        # Stores strategy *names* (not instances) — schedule_aggregated()
-        # interprets the strategy at scheduling time.
+        # Per-model strategies are instantiated when their model is discovered.
         # Fallback chain: model-level → global → load_balanced (default).
         model_scheduler_config = getattr(config, "_model_schedulers", {})
         # Validate scheduler names at startup; collect invalid ones first
@@ -1057,7 +926,6 @@ class ProxyServer:
 
         global_policy = _create_scheduling_policy(
             config,
-            scheduling_policy,
             self.registry,
             all_prefill=all_prefill,
             all_decode=all_decode,

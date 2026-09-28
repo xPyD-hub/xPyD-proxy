@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for multi-model routing support."""
 
-import itertools
 from unittest.mock import patch
 
 from xpyd.registry import InstanceRegistry
+from xpyd.scheduler import Scheduler, SchedulingContext
 
 
 class TestRegistryAddWithModel:
@@ -129,25 +129,26 @@ class TestSchedulerRoutesByModel:
                 registry=reg,
             )
 
-        cycler = itertools.cycle(all_prefill)
-        result = sched.schedule(
-            cycler,
-            is_prompt=True,
-            request_len=100,
-            max_tokens=100,
-            model="llama-3",
+        runtime = Scheduler(reg)
+        result = runtime.reserve(
+            sched,
+            SchedulingContext(
+                role="prefill", request_len=100, max_tokens=100, model="llama-3"
+            ),
+            all_prefill,
         )
-        assert result == "10.0.0.1:8000"
+        assert result.address == "10.0.0.1:8000"
+        result.release()
 
-        cycler_d = itertools.cycle(all_decode)
-        result_d = sched.schedule(
-            cycler_d,
-            is_prompt=False,
-            request_len=100,
-            max_tokens=100,
-            model="deepseek-r1",
+        result_d = runtime.reserve(
+            sched,
+            SchedulingContext(
+                role="decode", request_len=100, max_tokens=100, model="deepseek-r1"
+            ),
+            all_decode,
         )
-        assert result_d == "10.0.0.2:9000"
+        assert result_d.address == "10.0.0.2:9000"
+        result_d.release()
 
 
 class TestSchedulerNoInstanceForModel:
@@ -172,13 +173,12 @@ class TestSchedulerNoInstanceForModel:
                 registry=reg,
             )
 
-        cycler = itertools.cycle(["10.0.0.1:8000"])
-        result = sched.schedule(
-            cycler,
-            is_prompt=True,
-            request_len=100,
-            max_tokens=100,
-            model="nonexistent",
+        result = Scheduler(reg).reserve(
+            sched,
+            SchedulingContext(
+                role="prefill", request_len=100, max_tokens=100, model="nonexistent"
+            ),
+            ["10.0.0.1:8000"],
         )
         assert result is None
 
@@ -213,19 +213,14 @@ class TestSchedulerLoadBalanceWithinModel:
             )
 
         # All requests with model="llama-3" must only go to llama-3 instances
+        runtime = Scheduler(reg)
         for _ in range(20):
-            cycler = itertools.cycle(all_decode)
-            result = sched.schedule(
-                cycler,
-                is_prompt=False,
-                request_len=100,
-                max_tokens=100,
-                model="llama-3",
+            result = runtime.reserve(
+                sched,
+                SchedulingContext(
+                    role="decode", request_len=100, max_tokens=100, model="llama-3"
+                ),
+                all_decode,
             )
-            assert result in ("10.0.0.1:9001", "10.0.0.2:9002")
-            # Release the slot
-            if result:
-                sched.schedule_completion(
-                    decode_instance=result,
-                    req_len=100,
-                )
+            assert result.address in ("10.0.0.1:9001", "10.0.0.2:9002")
+            result.release()

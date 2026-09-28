@@ -455,7 +455,7 @@ class TestZmqChatHelpers:
         }
 
     @pytest.mark.asyncio
-    async def test_prefill_first_nonstream_merges_chat_and_usage(self, server):
+    async def test_prefill_first_nonstream_merges_chat_and_usage(self):
         async def decode():
             yield json.dumps(
                 {
@@ -476,10 +476,11 @@ class TestZmqChatHelpers:
             "model": "model",
             "choices": [{"text": "A"}],
         }
+        reservation = MagicMock()
         chunks = [
             chunk
             async for chunk in _zmq_nonstream_generator(
-                prefill, decode(), server, "p", "d", 3, is_chat=True
+                prefill, decode(), reservation, is_chat=True
             )
         ]
         output = json.loads(chunks[0])
@@ -489,9 +490,10 @@ class TestZmqChatHelpers:
             "completion_tokens": 2,
             "total_tokens": 5,
         }
+        reservation.release_all.assert_called_once_with()
 
     @pytest.mark.asyncio
-    async def test_prefill_first_stream_has_chat_shape(self, server):
+    async def test_prefill_first_stream_has_chat_shape(self):
         async def decode():
             yield (
                 b'data: {"id":"cmpl-d","created":2,"model":"model",'
@@ -510,10 +512,11 @@ class TestZmqChatHelpers:
             "model": "model",
             "choices": [{"text": "A"}],
         }
+        reservation = MagicMock()
         chunks = [
             chunk
             async for chunk in _zmq_stream_generator(
-                prefill, decode(), server, "p", "d", 3, is_chat=True
+                prefill, decode(), reservation, is_chat=True
             )
         ]
         head = json.loads(chunks[0].decode().removeprefix("data: "))
@@ -532,6 +535,7 @@ class TestZmqChatHelpers:
             "completion_tokens": 2,
             "total_tokens": 5,
         }
+        reservation.release_all.assert_called_once_with()
 
 
 class TestHandleCompletion:
@@ -608,9 +612,6 @@ class TestHandleCompletion:
         raw_request.client = None
 
         server.reserve = MagicMock(return_value=None)
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
-        server.exception_handler = MagicMock()
         labels = {
             "instance": "unknown",
             "error_type": "no_available_instance",
@@ -629,7 +630,6 @@ class TestHandleCompletion:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 503
-        server.exception_handler.assert_not_called()
         track_end.assert_called_once_with("/v1/completions", 0)
         assert (
             REGISTRY.get_sample_value("proxy_instance_errors_total", labels)
@@ -661,9 +661,6 @@ class TestHandleCompletion:
         server.disaggregated_mode = "nixl"
         leases = reservations()
         server.reserve = MagicMock(side_effect=leases)
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
-        server.exception_handler = MagicMock()
         server._record_failure = MagicMock()
 
         async def forward(*_args, **_kwargs):
@@ -737,12 +734,9 @@ class TestHandleCompletion:
         }
         leases = reservations(3)
         server.reserve = MagicMock(side_effect=leases)
-        server.prefill_cycler = MagicMock()
-        server.decode_cycler = MagicMock()
         server.zmq_config.receivers = {"decode:8000": receiver}
         server.zmq_notifications.register = AsyncMock()
         server.zmq_notifications.wait = AsyncMock()
-        server.exception_handler = MagicMock()
         server._record_failure = MagicMock()
         server.registry = None
         server.generator = D_first_token_generator

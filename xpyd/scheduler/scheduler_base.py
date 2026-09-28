@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Abstract base class for scheduling policies."""
 
-import itertools
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -83,44 +82,7 @@ class SchedulingPolicy(ABC):
     ) -> None:
         """Update policy state before the shared node list is shortened."""
 
-    def on_request_finished(self, context: SchedulingContext, address: str) -> None:
-        """Release strategy-specific load, independently of success or failure."""
-        if context.role != "aggregated":
-            self.schedule_completion(
-                prefill_instance=address if context.role == "prefill" else None,
-                decode_instance=address if context.role == "decode" else None,
-                req_len=context.request_len,
-            )
-
-    def schedule(
-        self,
-        cycler: itertools.cycle,
-        is_prompt: Optional[bool] = None,
-        request_len: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        model: str = "",
-        **kwargs,
-    ) -> Optional[str]:
-        """Legacy P/D entry point; production routing uses select_node()."""
-        if self.registry is None:
-            raise RuntimeError("Legacy scheduling requires an instance registry")
-        context = SchedulingContext(
-            role="prefill" if is_prompt else "decode",
-            model=model,
-            request_len=request_len or 0,
-            max_tokens=max_tokens or 0,
-            **kwargs,
-        )
-        candidates = [
-            Candidate(address, self.registry.get_active_requests(address))
-            for address in self.registry.get_available_instances(context.role, model)
-        ]
-        return self.select_node(context, candidates)
-
-    def schedule_completion(  # noqa: B027 - optional hook, not abstract
-        self,
-        prefill_instance: Optional[str] = None,
-        decode_instance: Optional[str] = None,
-        req_len: Optional[int] = None,
+    def on_request_finished(  # noqa: B027 - optional lifecycle hook
+        self, context: SchedulingContext, address: str
     ) -> None:
-        """Called when a request finishes. Override to track load."""
+        """Release strategy-specific load, independently of success or failure."""
