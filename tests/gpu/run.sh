@@ -128,7 +128,7 @@ if [[ ! "${MATRIX_REQUESTS}" =~ ^[1-9][0-9]*$ ||
     exit 2
 fi
 
-for command in curl nvidia-smi python3 timeout vllm xpyd; do
+for command in curl nvidia-smi python3 timeout vllm; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command '${command}' was not found in PATH." >&2
         exit 2

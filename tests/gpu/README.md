@@ -10,8 +10,8 @@ fails.
 
 - At least four NVIDIA GPUs
 - `nvidia-smi`, `curl`, and GNU `timeout`
-- A Python environment containing this repository, vLLM, and the `xpyd`
-  command
+- A Python environment containing this repository's runtime dependencies
+  and vLLM
 - A local model compatible with the selected scenarios
 
 Run the default smoke suite:
@@ -27,10 +27,25 @@ The default model path is `/workspace/Meta-Llama-3-8B-Instruct/`. Use
 bash tests/gpu/run.sh --model /models/Meta-Llama-3-8B-Instruct
 ```
 
+GPU examples launch xPyD from this checkout through `examples/lib/run_proxy.sh`,
+including when an example is run directly instead of through this suite.
+An older `xpyd` executable on `PATH` is not used. The shell launcher defaults
+to `python3`; set `PYTHON` to select another interpreter. Python matrix runners
+use their own interpreter for the proxy as well.
+The launcher prioritizes its own checkout even when invoked from another
+checkout, while preserving the caller's working directory for relative
+configuration paths.
+
 The default suite covers aggregated routing policies, direct 2P2D, and a mixed
 aggregated/disaggregated deployment. Results are written beneath
 `tests/gpu/logs/<UTC timestamp>/`; `summary.tsv` is suitable for scripts and
 individual scenario logs contain the full output.
+
+All GPU proxy configurations, including generated 8P8D matrix configurations,
+enable periodic backend health checks with a two-second interval and timeout.
+Unhealthy nodes are excluded from scheduling and healthy nodes become eligible
+again after discovery and health monitoring succeed. Startup readiness alone
+does not substitute for these ongoing checks.
 
 Use `--list` to inspect all cases, `--case NAME` to select one or more cases,
 or `--all` to include the LMCache and NIXL 2P2D and 8P8D matrices:

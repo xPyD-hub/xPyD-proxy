@@ -79,3 +79,7 @@ zmq:
 startup:
   wait_timeout_seconds: 1200
   probe_interval_seconds: 2
+health_check:
+  enabled: true
+  interval_seconds: 2
+  timeout_seconds: 2

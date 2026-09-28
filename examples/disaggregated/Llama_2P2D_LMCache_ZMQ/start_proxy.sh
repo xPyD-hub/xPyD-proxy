@@ -4,6 +4,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-exec xpyd proxy \
+exec bash "${SCRIPT_DIR}/../../lib/run_proxy.sh" proxy \
     --config "${SCRIPT_DIR}/xpyd_2p2d.yaml" \
     --disaggregated-mode zmq
