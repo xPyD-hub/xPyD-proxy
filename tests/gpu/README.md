@@ -32,6 +32,11 @@ aggregated/disaggregated deployment. Results are written beneath
 `tests/gpu/logs/<UTC timestamp>/`; `summary.tsv` is suitable for scripts and
 individual scenario logs contain the full output.
 
+The aggregated scheduler matrix also runs the CPU-only
+[controlled scheduling contracts](../../examples/scheduler_semantics/README.md).
+These hold a request at a known backend to check busy-node avoidance; real
+inference remains a separate check rather than a probabilistic routing assertion.
+
 Use `--list` to inspect all cases, `--case NAME` to select one or more cases,
 or `--all` to include the LMCache and NIXL 2P2D and 8P8D matrices:
 

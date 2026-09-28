@@ -71,6 +71,8 @@ for scheduler in "${SCHEDULERS[@]}"; do
 
     echo "=== Testing ${scheduler} ==="
     cd "${XPYD_ROOT}"
+    python3 "${SCRIPT_DIR}/../../lib/scheduler_semantics.py" \
+        --topology aggregated --scheduler "${scheduler}"
     PYTHONUNBUFFERED=1 xpyd proxy -c "${config}" >"${proxy_log}" 2>&1 &
     PROXY_PID=$!
     wait_for_proxy
