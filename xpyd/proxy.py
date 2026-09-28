@@ -36,19 +36,21 @@ from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_respon
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
 from xpyd.routes import register_routes
-from xpyd.scheduler import (  # noqa: F401 - legacy xpyd.proxy import compatibility
-    LoadBalancedScheduler as LoadBalancedScheduler,
-)
-from xpyd.scheduler import Reservation
-from xpyd.scheduler import (  # noqa: F401 - legacy xpyd.proxy import compatibility
-    RoundRobinSchedulingPolicy as RoundRobinSchedulingPolicy,
-)
 from xpyd.scheduler import (
+    LoadBalancedScheduler,
+    Reservation,
+    RoundRobinSchedulingPolicy,
     Scheduler,
     SchedulingContext,
     SchedulingPolicy,
     default_registry,
 )
+
+# Re-export the concrete policies from ``xpyd.proxy`` as well: scheduler
+# construction moved behind the registry, but legacy callers importing these
+# names from this module keep working. Listing them in ``__all__`` marks the
+# re-exports as intentional for linters and CodeQL.
+__all__ = ["LoadBalancedScheduler", "RoundRobinSchedulingPolicy"]
 
 
 class _ExtraFormatter(logging.Formatter):
