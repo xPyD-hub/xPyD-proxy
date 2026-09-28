@@ -107,6 +107,8 @@ start_node decode 8200 5700 "${LOG_DIR}/decode-0.log"
 start_node decode 8201 5701 "${LOG_DIR}/decode-1.log"
 
 for scheduler in "${SCHEDULERS[@]}"; do
+    python "${SCRIPT_DIR}/../../lib/scheduler_semantics.py" \
+        --topology disaggregated --scheduler "${scheduler}"
     if [[ "${scheduler}" != "roundrobin" ]]; then
         start_proxy "${scheduler}"
     fi
