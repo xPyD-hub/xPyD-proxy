@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -86,7 +87,14 @@ def main() -> None:
 
                 with log_path.open("wb") as log:
                     process = subprocess.Popen(
-                        ["xpyd", "proxy", "--config", str(config)],
+                        [
+                            "bash",
+                            str(repo_root / "examples/lib/run_proxy.sh"),
+                            "proxy",
+                            "--config",
+                            str(config),
+                        ],
+                        env={**os.environ, "PYTHON": sys.executable},
                         cwd=repo_root,
                         stdout=log,
                         stderr=subprocess.STDOUT,

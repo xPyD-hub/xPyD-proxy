@@ -71,7 +71,8 @@ for scheduler in "${SCHEDULERS[@]}"; do
 
     echo "=== Testing ${scheduler} ==="
     cd "${XPYD_ROOT}"
-    PYTHONUNBUFFERED=1 xpyd proxy -c "${config}" >"${proxy_log}" 2>&1 &
+    PYTHONUNBUFFERED=1 bash "${SCRIPT_DIR}/../../lib/run_proxy.sh" \
+        proxy -c "${config}" >"${proxy_log}" 2>&1 &
     PROXY_PID=$!
     wait_for_proxy
 
