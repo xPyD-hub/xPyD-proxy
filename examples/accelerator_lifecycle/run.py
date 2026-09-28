@@ -151,19 +151,54 @@ def heartbeat(topology, nodes, online):
     return " | ".join(fields)
 
 
-def stop(process):
+def group_running(group_id):
+    if not Path("/proc/self/stat").is_file():
+        raise RuntimeError("Process-group cleanup requires Linux /proc")
+    for path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = path.read_text().rsplit(")", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        # Zombies have exited and released their resources; their parent reaps them.
+        if int(fields[2]) == group_id and fields[0] not in ("Z", "X"):
+            return True
+    return False
+
+
+def wait_group_exit(process, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        if process.poll() is not None and not group_running(process.pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def stop(process, timeout=90, kill_timeout=30):
     # Each child owns a new process group, including vLLM engine workers.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         # The owned process group has already exited.
         pass
+    if wait_group_exit(process, timeout):
+        return
     try:
-        process.wait(timeout=90)
-    except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=30)
-        raise RuntimeError(f"Process {process.pid} required forced termination")
+    except ProcessLookupError:
+        # The group may exit between the deadline and escalation.
+        pass
+    if not wait_group_exit(process, kill_timeout):
+        raise RuntimeError(f"Process group {process.pid} did not exit after SIGKILL")
+    raise RuntimeError(f"Process group {process.pid} required forced termination")
+
+
+def stop_and_release(processes, name, released):
+    stop(processes[name])
+    remaining = {key: value for key, value in processes.items() if key != name}
+    wait_for(f"{name} port and accelerator memory release", released, remaining)
+    del processes[name]
 
 
 def run(args, topology):
@@ -261,16 +296,14 @@ def run(args, topology):
         online.add(node["address"])
 
     def stop_node(index):
-        process = processes.pop(f"backend-{index}")
-        stop(process)
-        online.remove(nodes[index]["address"])
-        wait_for(
-            f"backend {index} port and accelerator memory release",
+        stop_and_release(
+            processes,
+            f"backend-{index}",
             lambda: port_free(ports[index + 1])
             and memory_mib(args.device, devices[index])
             <= baseline[devices[index]] + 64,
-            processes,
         )
+        online.remove(nodes[index]["address"])
 
     def cleanup():
         phase("cleanup")

@@ -29,6 +29,11 @@ loss for each role, and recovery at the same address. A surviving peer must
 continue serving. In mixed mode a missing P or D must make only the P/D model
 return 503; the aggregated model must still return its own model name and text.
 Restarts wait for the former process, port, and accelerator memory to be released.
+Cleanup waits for every live member of the owned Linux process group, not just
+the vLLM API parent. Workers that outlive their parent are still terminated;
+SIGKILL escalation fails the scenario even after successful cleanup. A backend
+remains tracked until its group, port and memory are released, so final cleanup
+can retry failures.
 
 **Direct mode does not transfer KV caches.** These tests exercise the proxy P/D
 HTTP lifecycle with real accelerator inference, not NIXL/LMCache transport,
