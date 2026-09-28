@@ -122,3 +122,35 @@ def test_prepare_requires_exact_sha(sha, resolved, valid):
     assert len(output["statuses"]) == int(valid)
     if valid:
         assert output["statuses"][0]["state"] == "pending"
+
+
+@pytest.mark.parametrize("variant", ["complete", "missing", "duplicate", "failed"])
+def test_actual_manifest_gate(tmp_path, monkeypatch, variant):
+    results = [
+        {"topology": name, "status": "success"}
+        for name in ("aggregated", "direct", "mixed")
+    ]
+    if variant == "missing":
+        results.pop()
+    elif variant == "duplicate":
+        results[2]["topology"] = "direct"
+    elif variant == "failed":
+        results[2]["status"] = "failure"
+    (tmp_path / "results.json").write_text(json.dumps(results))
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("TARGET_SHA", "a" * 40)
+    step = next(
+        step
+        for step in WORKFLOW["jobs"]["hardware"]["steps"]
+        if step.get("name") == "Require complete results"
+    )
+    code = compile(
+        step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], "<gate>", "exec"
+    )
+    if variant == "complete":
+        exec(code, {})
+        assert (tmp_path / "tested-sha.txt").read_text() == "a" * 40 + "\n"
+    else:
+        with pytest.raises(AssertionError):
+            exec(code, {})
+        assert not (tmp_path / "tested-sha.txt").exists()
