@@ -4,14 +4,29 @@ set -euo pipefail
 
 NIXL_VERSION="${NIXL_VERSION:-v1.3.0}"
 VLLM_VERSION="${VLLM_VERSION:-0.25.0}"
-export WHEELS_CACHE_HOME="${WHEELS_CACHE_HOME:-${HOME}/.cache/xpyd-nixl-wheels}"
+# Upstream v1.3.0 still declares project.version = "1.2.0".
+if [[ "${NIXL_VERSION#v}" == "1.3.0" ]]; then
+    NIXL_WHEEL_VERSION="${NIXL_WHEEL_VERSION:-1.2.0}"
+else
+    NIXL_WHEEL_VERSION="${NIXL_WHEEL_VERSION:-${NIXL_VERSION#v}}"
+fi
+export NIXL_WHEEL_VERSION
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHE_ID="$(python "${SCRIPT_DIR}/wheel_cache.py" fingerprint \
+    --nixl "${NIXL_VERSION}" --vllm "${VLLM_VERSION}" --wheel-version "${NIXL_WHEEL_VERSION}")"
+export WHEELS_CACHE_HOME="${WHEELS_CACHE_HOME:-${HOME}/.cache/xpyd-nixl-wheels}/${CACHE_ID}"
 # This example runs every P/D process on one host. Loopback avoids depending
 # on cloud-runner NIC metadata; multi-host users can override this variable.
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-lo}"
 
 mkdir -p "${WHEELS_CACHE_HOME}"
+CACHED_WHEEL="$(python "${SCRIPT_DIR}/wheel_cache.py" select \
+    --nixl "${NIXL_VERSION}" --wheel-version "${NIXL_WHEEL_VERSION}" --directory "${WHEELS_CACHE_HOME}")"
 
-if ! compgen -G "${WHEELS_CACHE_HOME}/nixl*.whl" >/dev/null; then
+if [[ -n "${CACHED_WHEEL}" ]]; then
+    echo "Installing fingerprinted CPU NIXL wheel: ${CACHED_WHEEL}"
+    python -m pip install --force-reinstall --no-deps "${CACHED_WHEEL}"
+else
     sudo apt-get update
     sudo apt-get install -y \
         automake \
@@ -25,7 +40,6 @@ if ! compgen -G "${WHEELS_CACHE_HOME}/nixl*.whl" >/dev/null; then
         ninja-build \
         patchelf \
         pkg-config
-fi
 
 installer="$(mktemp)"
 trap 'rm -f "${installer}"' EXIT
@@ -38,9 +52,6 @@ curl --fail --location --retry 3 \
 # at least 0.14.5. The venv binary takes precedence over the apt package.
 python -m pip install "patchelf>=0.14.5"
 
-# The upstream installer uses the Git tag in its wheel filename glob. NIXL
-# tags carry a leading "v", while Python wheel versions do not.
-sed -i 's/f"nixl\*{NIXL_VERSION}\*\.whl"/"nixl*.whl"/' "${installer}"
 # Build only the transport used by this example. The default plugin set also
 # builds POSIX support and leaves auditwheel with an unavailable liburing.so.2.
 sed -i \
@@ -53,6 +64,12 @@ import sys
 
 path = Path(sys.argv[1])
 content = path.read_text()
+old_pattern = 'f"nixl*{NIXL_VERSION}*.whl"'
+if old_pattern not in content:
+    raise RuntimeError("Upstream wheel lookup changed; review the installer patch")
+content = content.replace(
+    old_pattern, 'f"nixl*-{os.environ[\'NIXL_WHEEL_VERSION\']}-*.whl"', 1
+)
 content = content.replace(
     "import subprocess\n",
     "import subprocess\nimport shutil\nimport tempfile\nimport zipfile\n",
@@ -104,11 +121,20 @@ content = content.replace(
 path.write_text(content)
 PY
 
-NIXL_VERSION="${NIXL_VERSION}" python "${installer}"
+# vLLM may already have installed a different NIXL. Do not let the upstream
+# installer's package-presence shortcut skip the requested CPU build.
+NIXL_VERSION="${NIXL_VERSION}" python "${installer}" --force-reinstall
+python "${SCRIPT_DIR}/wheel_cache.py" select \
+    --nixl "${NIXL_VERSION}" --wheel-version "${NIXL_WHEEL_VERSION}" --directory "${WHEELS_CACHE_HOME}"
+fi
 platform_version="$(
     python -c 'import importlib.metadata as m; print(m.version("nixl-cu12"))'
 )"
-python -m pip install --no-deps "nixl==${platform_version}"
+[[ "${platform_version}" == "${NIXL_WHEEL_VERSION}" ]] || {
+    echo "ERROR: expected NIXL wheel ${NIXL_WHEEL_VERSION} from ${NIXL_VERSION}, installed ${platform_version}" >&2
+    exit 1
+}
+python -m pip install --force-reinstall --no-deps "nixl==${platform_version}"
 UCX_TLS=tcp python - <<'PY'
 import os
 from pathlib import Path
