@@ -132,6 +132,7 @@ def main():
                 env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
             try:
                 DEMO["wait_for"](

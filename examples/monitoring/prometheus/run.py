@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import ipaddress
 import json
 import math
 import os
@@ -93,12 +94,19 @@ def query(expression):
     return result["data"]["result"]
 
 
+def check_processes(label, processes):
+    for process in processes:
+        code = process.poll()
+        if code is not None:
+            raise RuntimeError(
+                f"{label}: process {process.pid} exited with code {code}; see logs"
+            )
+
+
 def wait_for(label, predicate, processes, timeout=60):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for process in processes:
-            if process.poll() is not None:
-                raise RuntimeError(f"{label}: process {process.pid} exited; see logs")
+        check_processes(label, processes)
         try:
             if predicate():
                 return
@@ -109,25 +117,57 @@ def wait_for(label, predicate, processes, timeout=60):
     raise TimeoutError(f"Timed out: {label}")
 
 
-def port_free(port):
+def port_free(port, host="127.0.0.1"):
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(("127.0.0.1", port))
+            sock.bind((host, port))
         except OSError:
             return False
     return True
 
 
-def stop(process):
-    if process.poll() is None:
-        process.terminate()
+def group_running(group_id):
+    if not Path("/proc/self/stat").is_file():
+        raise RuntimeError("Process-group cleanup requires Linux /proc")
+    for path in Path("/proc").glob("[0-9]*/stat"):
         try:
-            process.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10)
-            raise RuntimeError(f"Process {process.pid} required forced termination")
+            fields = path.read_text().rsplit(")", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            # Processes can exit while their group is being inspected.
+            continue
+        if int(fields[2]) == group_id and fields[0] not in ("Z", "X"):
+            return True
+    return False
+
+
+def wait_group_exit(process, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        if process.poll() is not None and not group_running(process.pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def stop(process, timeout=60, kill_timeout=10):
+    # Every owned service starts a new group, including its engine workers.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # The owned process group may already have exited.
+        pass
+    if wait_group_exit(process, timeout):
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        # The group can exit between the wait and escalation.
+        pass
+    if not wait_group_exit(process, kill_timeout):
+        raise RuntimeError(f"Process group {process.pid} did not exit after SIGKILL")
+    raise RuntimeError(f"Process group {process.pid} required forced termination")
 
 
 def cleanup_owned_services(processes, logs, ports):
@@ -135,15 +175,18 @@ def cleanup_owned_services(processes, logs, ports):
     for process in reversed(processes):
         try:
             stop(process)
-        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             failures.append(str(exc))
     for log in logs:
-        log.close()
-    for port in ports:
+        try:
+            log.close()
+        except OSError as exc:
+            failures.append(str(exc))
+    for host, port in ports:
         try:
             wait_for(
-                f"cleanup port {port}",
-                lambda port=port: port_free(port),
+                f"cleanup port {host}:{port}",
+                lambda host=host, port=port: port_free(port, host),
                 [],
                 timeout=30,
             )
@@ -262,7 +305,7 @@ def traffic(model, log_dir, processes, mode="aggregated"):
 
 
 def main():
-    global PROXY
+    global PROXY, PROMETHEUS
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--model", help="Local model path; start an owned vLLM backend")
@@ -284,7 +327,24 @@ def main():
     parser.add_argument(
         "--serve", action="store_true", help="Keep demo running until Ctrl-C"
     )
+    parser.add_argument(
+        "--prometheus-host",
+        type=ipaddress.IPv4Address,
+        default="127.0.0.1",
+        help="Prometheus listen IPv4 address; non-loopback access has no authentication",
+    )
     args = parser.parse_args()
+    prometheus_host = str(args.prometheus_host)
+    client_host = (
+        "127.0.0.1" if args.prometheus_host.is_unspecified else prometheus_host
+    )
+    PROMETHEUS = f"http://{client_host}:19090"
+    if not args.prometheus_host.is_loopback:
+        print(
+            f"WARNING: Prometheus listens on {prometheus_host}:19090 without "
+            "authentication. Restrict inbound access to trusted clients.",
+            flush=True,
+        )
     if args.model and not Path(args.model).is_dir():
         parser.error("--model must be an existing local directory")
     if args.device_id < 0:
@@ -308,12 +368,17 @@ def main():
     parsed = urllib.parse.urlsplit(backend)
     if parsed.scheme != "http" or not parsed.hostname or parsed.path not in ("", "/"):
         parser.error("--backend-url must be an HTTP base URL")
-    ports = [19090] + ([] if args.proxy_url else [18868])
+    ports = [(prometheus_host, 19090)] + (
+        [] if args.proxy_url else [("127.0.0.1", 18868)]
+    )
     if args.model:
-        ports.append(18100)
-    for port in ports:
-        if not port_free(port):
-            raise RuntimeError(f"Port {port} is already in use; nothing was stopped")
+        ports.append(("127.0.0.1", 18100))
+    for host, port in ports:
+        if not port_free(port, host):
+            raise RuntimeError(
+                f"Cannot bind {host}:{port}; address unavailable or port in use; "
+                "nothing was stopped"
+            )
     log_dir = HERE / "logs" / time.strftime("%Y%m%dT%H%M%S")
     log_dir.mkdir(parents=True, exist_ok=False)
     tools = Path(os.environ["PROMETHEUS_DIR"])
@@ -348,7 +413,12 @@ def main():
         log = (log_dir / f"{name}.log").open("ab")
         logs.append(log)
         process = subprocess.Popen(
-            command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT
+            command,
+            cwd=ROOT,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
         processes.append(process)
         return process
@@ -379,7 +449,6 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, interrupted)
-    failures = []
     try:
         phase("1: start Prometheus and connect to proxy")
         proxy = None if args.proxy_url else start_proxy()
@@ -390,7 +459,7 @@ def main():
                 "--config.file=" + str(prometheus_path),
                 "--storage.tsdb.path=" + str(log_dir / "data"),
                 "--storage.tsdb.retention.time=1d",
-                "--web.listen-address=127.0.0.1:19090",
+                f"--web.listen-address={prometheus_host}:19090",
             ],
         )
         wait_for(
@@ -554,9 +623,9 @@ def main():
         else:
             print("Existing proxy not stopped; live alert/recovery test not performed.")
         print(f"Logs and query snapshots: {log_dir}")
-        print("Prometheus: http://127.0.0.1:19090/query")
-        print("Targets: http://127.0.0.1:19090/targets")
-        print("Alerts: http://127.0.0.1:19090/alerts")
+        print(f"Prometheus: {PROMETHEUS}/query")
+        print(f"Targets: {PROMETHEUS}/targets")
+        print(f"Alerts: {PROMETHEUS}/alerts")
         print(f"Metrics: {PROXY}/metrics")
         if args.serve:
             print(
@@ -565,6 +634,7 @@ def main():
             )
             while True:
                 time.sleep(5)
+                check_processes("demo services", processes)
                 status, body = http(
                     PROXY + "/v1/completions",
                     {
@@ -576,6 +646,7 @@ def main():
                     },
                     timeout=180,
                 )
+                check_processes("demo services", processes)
                 if status != 200:
                     raise RuntimeError(
                         f"Demo traffic failed: HTTP {status}: {body[:300]!r}"
@@ -584,8 +655,8 @@ def main():
                     raise RuntimeError("Demo streaming traffic ended without [DONE]")
     finally:
         failures = cleanup_owned_services(processes, logs, ports)
-    if failures:
-        raise RuntimeError("; ".join(failures))
+        if failures:
+            raise RuntimeError("Service cleanup failed: " + "; ".join(failures))
     print("Owned services stopped; ports released. Existing backend was not stopped.")
 
 

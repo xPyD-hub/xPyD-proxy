@@ -21,7 +21,7 @@ Use `--device cuda` for a CUDA-enabled vLLM environment, or `--device cpu` for
 a CPU-enabled vLLM environment and a compatible model. This option selects
 the device environment; it does not install or convert a vLLM build.
 The launcher uses the same Python interpreter for xPyD and vLLM. All services
-bind to loopback; ports **18100**, **18868**, and **19090** must be available.
+bind to loopback by default; ports **18100**, **18868**, and **19090** must be available.
 
 The command starts the repository proxy before the backend, confirms offline
 503 responses, starts vLLM and Prometheus, and then performs:
@@ -41,6 +41,13 @@ logs; it never stops an existing attached backend/proxy. For accelerator runs,
 also check device memory/processes with `xpu-smi ps` / `xpu-smi stats -d 0`
 or `nvidia-smi` after exit, before restarting a backend.
 
+Owned services run in separate process groups. Shutdown waits for their workers
+even if the parent has already exited, escalating to SIGKILL if necessary.
+Forced termination or failed cleanup is reported as an error with a nonzero exit
+status, including when stopping with Ctrl-C or SIGTERM. During `--serve`, owned
+processes are checked before and after each traffic request; if Prometheus or
+another owned service exits, the demo reports the failure and cleans up.
+
 ## What you can see
 
 | Address | Visible result |
@@ -59,8 +66,8 @@ started by this example.
 
 On the inference machine (A), run the XPU command above with **`--serve`** and
 leave that terminal open. Without `--serve`, verification stops the services.
-The owned proxy explicitly uses `host: 127.0.0.1`; the backend and Prometheus
-also bind to loopback. Other proxy configurations retain the default
+The owned proxy explicitly uses `host: 127.0.0.1`; the backend and, by default,
+Prometheus also bind to loopback. Other proxy configurations retain the default
 `host: 0.0.0.0` unless configured otherwise.
 
 On the computer with a browser (B), open another terminal and run:
@@ -91,6 +98,32 @@ If the page fails, first check on A:
 If that succeeds, check the SSH tunnel, destination namespace, and B's local
 port. If the page loads but charts are empty, check `/targets` for `up=1`, select
 a recent time range, and keep demo traffic running.
+
+#### Direct LAN access without an SSH tunnel
+
+To explicitly expose only the Prometheus frontend, add
+`--prometheus-host <Linux-IPv4-address>` to the demo command. For example, if
+`192.0.2.10` is assigned inside the current network namespace (replace this
+documentation address with your Linux machine's actual address):
+
+```bash
+bash examples/monitoring/prometheus/run_all.sh \
+  --model /workspace/Qwen3.5-0.8B --device xpu --device-id 0 \
+  --prometheus-host 192.0.2.10 --serve
+```
+
+From Windows, open `http://192.0.2.10:19090/query` in a browser; `/targets`
+and `/alerts` are available on the same address. The proxy and backend remain
+loopback-only. Prometheus has **no authentication** in this example; restrict
+TCP 19090 to trusted clients using the host/network firewall. Do not expose it
+to the public internet. This option does not change firewall rules.
+
+With Docker host networking, the host IP can be bound directly. With bridge
+networking, use `--prometheus-host 0.0.0.0` inside the container and publish
+TCP 19090 on the host when creating the container. Preserve all existing
+device mappings, mounts, and other settings if recreating a container; never
+recreate a running inference container just to try a port mapping. The script
+does not configure Docker or publish ports.
 
 In Prometheus, try these expressions and select the graph view:
 
