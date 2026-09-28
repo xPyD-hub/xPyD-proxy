@@ -1,0 +1,144 @@
+name: Accelerator lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character commit SHA reviewed for hardware execution
+        type: string
+        required: true
+      device:
+        description: Dedicated accelerator runner
+        type: choice
+        options: [cuda, xpu]
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accelerator-${{ inputs.device }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Only the reviewed workflow on main may issue gate statuses.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Validate immutable target and mark pending
+        id: target
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ inputs.sha }}
+          DEVICE: ${{ inputs.device }}
+        with:
+          script: |
+            const sha = process.env.TARGET_SHA;
+            const device = process.env.DEVICE;
+            if (!/^[0-9a-f]{40}$/.test(sha) || !['cuda', 'xpu'].includes(device)) {
+              throw new Error('A lowercase full SHA and cuda/xpu device are required');
+            }
+            const {data: commit} = await github.rest.repos.getCommit({
+              ...context.repo, ref: sha
+            });
+            if (commit.sha !== sha) throw new Error('Resolved commit differs from input');
+            core.setOutput('sha', sha);
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha, state: 'pending',
+              context: `accelerator-lifecycle/${device}`,
+              description: 'Awaiting approval and real accelerator execution',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+
+  hardware:
+    needs: prepare
+    environment: accelerator-${{ inputs.device }}
+    runs-on: [self-hosted, linux, "${{ format('xpyd-{0}', inputs.device) }}"]
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      PYTHON: ${{ vars.ACCELERATOR_PYTHON || 'python3' }}
+      MODEL_PATH: ${{ vars.ACCELERATOR_MODEL_PATH }}
+      DEVICE: ${{ inputs.device }}
+      TARGET_SHA: ${{ needs.prepare.outputs.sha }}
+      LOG_DIR: ${{ runner.temp }}/accelerator-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Verify checkout and provisioned environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          test -n "${MODEL_PATH}" && test -d "${MODEL_PATH}"
+          command -v "${PYTHON}"
+          "${PYTHON}" -c 'import vllm, yaml, aiohttp'
+          test -f examples/accelerator_lifecycle/run_all.sh
+      - name: Run real accelerator lifecycle scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash examples/accelerator_lifecycle/run_all.sh \
+            --device "${DEVICE}" --model "${MODEL_PATH}" \
+            --devices 0 1 2 3 --topology all --log-dir "${LOG_DIR}"
+      - name: Require complete results
+        shell: bash
+        run: |
+          "${PYTHON}" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["LOG_DIR"])
+          results = json.loads((directory / "results.json").read_text())
+          expected = {"aggregated", "direct", "mixed"}
+          assert len(results) == 3, results
+          assert {item["topology"] for item in results} == expected, results
+          assert all(item["status"] == "success" for item in results), results
+          (directory / "tested-sha.txt").write_text(os.environ["TARGET_SHA"] + "\n")
+          PY
+      - name: Upload logs and exact tested SHA
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: accelerator-${{ inputs.device }}-${{ needs.prepare.outputs.sha }}-${{ github.run_attempt }}
+          path: ${{ env.LOG_DIR }}/
+          if-no-files-found: error
+
+  report:
+    needs: [prepare, hardware]
+    if: always() && needs.prepare.outputs.sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      # Never check out or execute the tested commit in this privileged job.
+      - name: Report only the hardware job's actual result
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ needs.prepare.outputs.sha }}
+          DEVICE: ${{ inputs.device }}
+          RESULT: ${{ needs.hardware.result }}
+        with:
+          script: |
+            const result = process.env.RESULT;
+            const state = result === 'success' ? 'success'
+              : result === 'failure' ? 'failure' : 'error';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: process.env.TARGET_SHA, state,
+              context: `accelerator-lifecycle/${process.env.DEVICE}`,
+              description: `Real accelerator lifecycle: ${result}`,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+            if (state !== 'success') core.setFailed(`Hardware result: ${result}`);

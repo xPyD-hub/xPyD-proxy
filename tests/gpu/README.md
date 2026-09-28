@@ -1,5 +1,8 @@
 # Local GPU integration suite
 
+For the opt-in GitHub Actions hardware workflow, immutable-SHA result statuses,
+runner provisioning and approval requirements, see [the accelerator CI gate](CI.md).
+
 This directory provides a CI-like, one-command wrapper around the GPU
 scenarios under `examples/`. It runs scenarios serially, captures their output,
 enforces a per-scenario timeout, verifies that ports and GPU processes are
