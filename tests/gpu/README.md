@@ -1,8 +1,5 @@
 # Local GPU integration suite
 
-For the opt-in GitHub Actions hardware workflow, immutable-SHA result statuses,
-runner provisioning and approval requirements, see [the accelerator CI gate](CI.md).
-
 This directory provides a CI-like, one-command wrapper around the GPU
 scenarios under `examples/`. It runs scenarios serially, captures their output,
 enforces a per-scenario timeout, verifies that ports and GPU processes are
@@ -69,3 +66,6 @@ environment-variable equivalents for the log directory and timeout.
 `MODEL=/models/Meta-Llama-3-8B-Instruct` is also supported. The wrapper keeps
 the examples' existing logical model names stable while changing only the
 weights path passed to vLLM.
+
+For the opt-in GitHub Actions hardware workflow, immutable-SHA result statuses,
+runner provisioning and approval requirements, see [the accelerator CI gate](CI.md).
