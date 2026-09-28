@@ -38,6 +38,12 @@ aggregated/disaggregated deployment. Results are written beneath
 `tests/gpu/logs/<UTC timestamp>/`; `summary.tsv` is suitable for scripts and
 individual scenario logs contain the full output.
 
+All GPU proxy configurations, including generated 8P8D matrix configurations,
+enable periodic backend health checks with a two-second interval and timeout.
+Unhealthy nodes are excluded from scheduling and healthy nodes become eligible
+again after discovery and health monitoring succeed. Startup readiness alone
+does not substitute for these ongoing checks.
+
 Use `--list` to inspect all cases, `--case NAME` to select one or more cases,
 or `--all` to include the LMCache and NIXL 2P2D and 8P8D matrices:
 

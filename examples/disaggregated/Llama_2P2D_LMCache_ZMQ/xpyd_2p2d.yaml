@@ -11,6 +11,10 @@ log_level: info
 scheduling: roundrobin
 disaggregated_mode: zmq
 first_token_source: decode
+health_check:
+  enabled: true
+  interval_seconds: 2
+  timeout_seconds: 2
 zmq:
   host: 127.0.0.1
   port: 7500
