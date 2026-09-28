@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_LOG_DIR="${BACKEND_LOG_DIR:-${SCRIPT_DIR}/logs}"
 PROXY_ENDPOINT="${PROXY_ENDPOINT:-http://127.0.0.1:8868}"
 MODEL="facebook/opt-125m"
 REQUEST_COUNT="${REQUEST_COUNT:-1}"
