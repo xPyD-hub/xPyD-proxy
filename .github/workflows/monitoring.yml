@@ -1,0 +1,38 @@
+name: Monitoring example
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prometheus:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - name: Check monitoring contracts
+        run: python -m pytest tests/unit/test_monitoring_example.py tests/unit/test_disaggregated_metrics.py -q
+      - name: Exercise real Prometheus with CPU fixture backends
+        run: python tests/monitoring/run_fixture.py
+      - name: Save monitoring evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: monitoring-results
+          path: |
+            examples/monitoring/prometheus/logs/*/*.log
+            examples/monitoring/prometheus/logs/*/*.json
+            examples/monitoring/prometheus/logs/*/*.prom

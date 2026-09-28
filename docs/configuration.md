@@ -20,6 +20,7 @@ Below is the complete schema with every supported field.
 model: deepseek-ai/DeepSeek-V4-Flash  # required in legacy single-model mode
 # Optional local root; model "org/name" maps to "<root>/org/name/"
 # tokenizer_path: /models/tokenizers
+host: 0.0.0.0                   # use 127.0.0.1 for loopback-only access
 port: 8000                      # default: 8000
 log_level: warning              # debug | info | warning | error
 
@@ -64,6 +65,7 @@ startup:
 | `model` | string | single-model only | — | Served model name in legacy single-model configuration. |
 | `tokenizer_path` | string | no | — | Local tokenizer root. Model `org/name` must exist at `<tokenizer_path>/org/name/`. |
 | `port` | integer | no | `8000` | TCP port the proxy listens on. |
+| `host` | string | no | `0.0.0.0` | Listen IP address or `localhost`, configured in YAML. Use `127.0.0.1` for local-only access; IPv6 literals such as `::1` are also accepted. |
 | `log_level` | string | no | `warning` | Logging verbosity. One of `debug`, `info`, `warning`, `error`. |
 | `prefill.nodes` | list[string] | **yes** | — | Addresses of prefill backend nodes in `"ip:port"` format. |
 | `prefill.tp_size` | integer | **yes** | — | Tensor-parallel degree for each prefill instance. |

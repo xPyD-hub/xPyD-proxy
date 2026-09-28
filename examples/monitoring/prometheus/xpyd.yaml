@@ -1,0 +1,15 @@
+instances:
+  - address: 127.0.0.1:18100
+    role: aggregated
+    model: observability-demo
+scheduling: roundrobin
+host: 127.0.0.1
+port: 18868
+log_level: info
+startup:
+  probe_interval_seconds: 1
+  heartbeat_interval_seconds: 5
+health_check:
+  enabled: true
+  interval_seconds: 1
+  timeout_seconds: 2

@@ -1,0 +1,24 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 1s
+tests:
+  - interval: 1s
+    input_series:
+      - series: 'up{job="xpyd-demo",instance="127.0.0.1:18868"}'
+        values: '1 0 0 0 0 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 4s
+        alertname: XPyDProxyDown
+        exp_alerts: []
+      - eval_time: 6s
+        alertname: XPyDProxyDown
+        exp_alerts:
+          - exp_labels:
+              job: xpyd-demo
+              instance: "127.0.0.1:18868"
+              severity: warning
+            exp_annotations:
+              summary: "The example proxy cannot be scraped"
+      - eval_time: 8s
+        alertname: XPyDProxyDown
+        exp_alerts: []

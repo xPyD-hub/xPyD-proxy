@@ -1309,7 +1309,7 @@ class ProxyServer:
         app.include_router(self.proxy_instance.router)
         config = uvicorn.Config(
             app,
-            host="0.0.0.0",
+            host=self.config.host,
             port=self.port,
             log_level=self.config.log_level,
             loop="uvloop",
