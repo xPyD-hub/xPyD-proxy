@@ -103,6 +103,7 @@ def wait_for(label, predicate, processes, timeout=60):
             if predicate():
                 return
         except (urllib.error.URLError, ConnectionError, TimeoutError):
+            # Endpoint not ready yet; retry until the deadline.
             pass
         time.sleep(0.2)
     raise TimeoutError(f"Timed out: {label}")
@@ -127,6 +128,28 @@ def stop(process):
             process.kill()
             process.wait(timeout=10)
             raise RuntimeError(f"Process {process.pid} required forced termination")
+
+
+def cleanup_owned_services(processes, logs, ports):
+    failures = []
+    for process in reversed(processes):
+        try:
+            stop(process)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            failures.append(str(exc))
+    for log in logs:
+        log.close()
+    for port in ports:
+        try:
+            wait_for(
+                f"cleanup port {port}",
+                lambda port=port: port_free(port),
+                [],
+                timeout=30,
+            )
+        except TimeoutError as exc:
+            failures.append(str(exc))
+    return failures
 
 
 def assert_pd_timing(before, after, model):
@@ -356,6 +379,7 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, interrupted)
+    failures = []
     try:
         phase("1: start Prometheus and connect to proxy")
         proxy = None if args.proxy_url else start_proxy()
@@ -559,29 +583,10 @@ def main():
                 if args.mode == "disaggregated" and b"data: [DONE]" not in body:
                     raise RuntimeError("Demo streaming traffic ended without [DONE]")
     finally:
-        failures = []
-        for process in reversed(processes):
-            try:
-                stop(process)
-            except (RuntimeError, subprocess.TimeoutExpired) as exc:
-                failures.append(str(exc))
-        for log in logs:
-            log.close()
-        for port in ports:
-            try:
-                wait_for(
-                    f"cleanup port {port}",
-                    lambda port=port: port_free(port),
-                    [],
-                    timeout=30,
-                )
-            except TimeoutError as exc:
-                failures.append(str(exc))
-        if failures:
-            raise RuntimeError("; ".join(failures))
-        print(
-            "Owned services stopped; ports released. Existing backend was not stopped."
-        )
+        failures = cleanup_owned_services(processes, logs, ports)
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    print("Owned services stopped; ports released. Existing backend was not stopped.")
 
 
 if __name__ == "__main__":
