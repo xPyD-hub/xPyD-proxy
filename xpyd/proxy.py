@@ -1049,7 +1049,7 @@ class ProxyServer:
         server.run()
 
 
-_VERSION = "1.7.0"
+_VERSION = "1.8.0"
 
 
 def _valid_port(value: str) -> int:
