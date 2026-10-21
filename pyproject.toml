@@ -33,7 +33,7 @@ dev = [
     "tiktoken>=0.7.0",
     "pytest-timeout>=2.3.0",
     "pytest-cov>=5.0.0",
-    "black==26.5.1",
+    "black==26.10.1",
 ]
 
 [project.scripts]

@@ -43,7 +43,7 @@ jobs:
         with: {python-version: "3.12"}
       # Pinned to the revisions in .pre-commit-config.yaml so the two gates
       # cannot disagree; bump both together.
-      - run: pip install -e ".[dev]" ruff isort==5.13.2 black==26.5.1
+      - run: pip install -e ".[dev]" ruff isort==5.13.2 black==26.10.1
       - run: ruff check .
       - run: isort --check-only --diff .
       - run: black --check --diff xpyd
