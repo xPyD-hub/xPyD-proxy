@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from xpyd.completion_handler import handle_completion
 from xpyd.proxy import Proxy
 from xpyd.registry import InstanceRegistry
-from xpyd.routes.completions import handle_completion
 from xpyd.scheduler import SchedulingContext, default_registry
 
 MODEL = "qwen-2"
@@ -174,7 +174,7 @@ async def test_nonstream_cancellation_releases_reservation():
         yield b""  # pragma: no cover
 
     proxy.forward_request = forward
-    with patch("xpyd.routes.completions.track_request_end") as ended:
+    with patch("xpyd.completion_handler.track_request_end") as ended:
         with pytest.raises(asyncio.CancelledError):
             await handle_completion("/v1/completions", request, proxy, False)
         ended.assert_called_once()

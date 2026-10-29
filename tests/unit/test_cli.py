@@ -8,17 +8,15 @@ from unittest.mock import patch
 
 import pytest
 
-from xpyd.config import ProxyConfig
-from xpyd.proxy import (
-    Proxy,
-    ProxyServer,
+from xpyd.cli import (
     _apply_cli_overrides,
     _build_parser,
     _normalize_cli_args,
     _print_config_summary,
     _resolve_config_path,
-    main,
 )
+from xpyd.config import ProxyConfig
+from xpyd.proxy import Proxy, ProxyServer, main
 
 
 class TestSubcommandParser:
