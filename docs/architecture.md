@@ -45,13 +45,54 @@ for latency (smaller batch, faster per-token).
 
 ### Proxy (`xpyd/proxy.py`)
 
-The central routing and scheduling component. It:
+`Proxy` owns scheduling, tokenizer state, backend forwarding, and instance
+membership. `ProxyServer` constructs these runtime components and starts uvicorn.
+The existing `xpyd.proxy:main` CLI entry point remains supported.
 
-- Accepts OpenAI-compatible API requests from clients
-- Routes requests through the prefill → decode pipeline
-- Manages prefill and decode instance pools
-- Supports dynamic instance addition/removal via admin API
-- Provides health checking and status endpoints
+### CLI and Application Assembly
+
+- `xpyd/cli.py` parses arguments, loads and overrides configuration, and runs
+  configuration-only commands. `load_config()` returns a `ProxyConfig` when a
+  server should start, or `None` when a configuration command completes without
+  starting one. It does not import or construct the proxy runtime.
+- `xpyd/app.py` exposes `create_app(config, proxy, health_monitor=None)`. It
+  assembles FastAPI around an existing proxy, mounts its router, and owns CORS,
+  readiness checks, and the discovery/health-monitor/ZMQ-listener lifecycle.
+  Constructing the app does not start a network listener or background services.
+
+Backends may be offline at startup. Discovery starts in the background, inference
+returns 503 until ready, and health/status/metrics/admin endpoints remain
+accessible.
+
+### Endpoint Modules (`xpyd/routes/`)
+
+Each logical endpoint has a module with `register(router, server)`.
+`routes/__init__.py` registers them all. URL aliases share their logical module:
+`score.py` handles `/score` and `/v1/score`, `rerank.py` handles all three rerank
+paths, and `health.py` handles `/health` and `/ping`. `status.py` serves both
+`/status` and `/status/instances`; `instances.py` handles addition and removal.
+Existing OPTIONS handlers stay beside their endpoints.
+
+`completions.py` and `chat_completions.py` are separate HTTP entry points. Both
+delegate to `xpyd/completion_handler.py`, which contains shared validation,
+request preparation, aggregated/P-D execution, response conversion, first-token
+generators, metrics, and reservation cleanup. Passthrough endpoints reuse
+`Proxy.post_to_instance()`.
+
+Runtime imports are one-way:
+
+```text
+proxy -> cli -> config
+proxy -> app -> discovery / health_monitor
+proxy -> routes -> completion_handler
+proxy -> completion_handler
+```
+
+App assembly, routes, and completion helpers receive the proxy object rather
+than importing its implementation at runtime. References to `Proxy` for type
+annotations are guarded by `TYPE_CHECKING`. Completion helpers do not import
+routes or app assembly. Resource ownership during streaming is unchanged:
+request completion and reservation release remain tied to response consumption.
 
 ### Scheduling Policies
 

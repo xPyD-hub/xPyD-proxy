@@ -8,8 +8,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
-from xpyd.metrics import REGISTRY
-from xpyd.routes.completions import (
+from xpyd.completion_handler import (
     _chat_completion_nonstream,
     _chat_completion_stream,
     _RequestReservation,
@@ -23,6 +22,7 @@ from xpyd.routes.completions import (
     tokenize_zmq_prompt,
     validate_completion_request,
 )
+from xpyd.metrics import REGISTRY
 from xpyd.scheduler import RoundRobinSchedulingPolicy, Scheduler, SchedulingContext
 
 
@@ -547,8 +547,8 @@ class TestHandleCompletion:
         raw_request.json = AsyncMock(side_effect=ValueError("bad json"))
 
         with (
-            patch("xpyd.routes.completions.track_request_start", return_value=0),
-            patch("xpyd.routes.completions.track_request_end") as track_end,
+            patch("xpyd.completion_handler.track_request_start", return_value=0),
+            patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -593,8 +593,8 @@ class TestHandleCompletion:
         raw_request.json = AsyncMock(return_value={})
 
         with (
-            patch("xpyd.routes.completions.track_request_start", return_value=0),
-            patch("xpyd.routes.completions.track_request_end") as track_end,
+            patch("xpyd.completion_handler.track_request_start", return_value=0),
+            patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -620,9 +620,9 @@ class TestHandleCompletion:
         before = REGISTRY.get_sample_value("proxy_instance_errors_total", labels) or 0
 
         with (
-            patch("xpyd.routes.completions.track_request_start", return_value=0),
-            patch("xpyd.routes.completions.track_request_end") as track_end,
-            patch("xpyd.routes.completions.logger"),
+            patch("xpyd.completion_handler.track_request_start", return_value=0),
+            patch("xpyd.completion_handler.track_request_end") as track_end,
+            patch("xpyd.completion_handler.logger"),
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -694,8 +694,8 @@ class TestHandleCompletion:
         server.registry.get_registered_models.return_value = ["known-model"]
 
         with (
-            patch("xpyd.routes.completions.track_request_start", return_value=0),
-            patch("xpyd.routes.completions.track_request_end") as track_end,
+            patch("xpyd.completion_handler.track_request_start", return_value=0),
+            patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
                 "/v1/completions", raw_request, server, is_chat=False
@@ -795,9 +795,9 @@ class TestHandleCompletion:
 
         server.forward_request = forward
         with (
-            patch("xpyd.routes.completions.track_request_start", return_value=0),
-            patch("xpyd.routes.completions.track_request_end"),
-            patch("xpyd.routes.completions.record_disaggregated_metrics"),
+            patch("xpyd.completion_handler.track_request_start", return_value=0),
+            patch("xpyd.completion_handler.track_request_end"),
+            patch("xpyd.completion_handler.record_disaggregated_metrics"),
         ):
             response = await handle_completion(
                 "/v1/chat/completions", raw_request, server, is_chat=True

@@ -1,20 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin route handlers."""
+"""Instance administration endpoints."""
 
 import ipaddress
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from xpyd.errors import INVALID_REQUEST, SERVER_ERROR, error_response
 
+if TYPE_CHECKING:
+    from xpyd.proxy import Proxy
+
 logger = logging.getLogger("xpyd.proxy")
 
 
-def register(router: APIRouter, server) -> None:
-    """Register admin routes on *router*."""
+def register(router: APIRouter, server: "Proxy") -> None:
+    """Register instance administration routes on *router*."""
 
     def _authenticate_api_key(x_api_key: str):
         """Validate admin API key. Returns error_response or None."""
@@ -26,14 +30,6 @@ def register(router: APIRouter, server) -> None:
             logger.warning("Unauthorized access attempt on admin endpoint")
             return error_response("Forbidden: Invalid API Key", INVALID_REQUEST, 403)
         return None
-
-    async def get_status():
-        return {
-            "prefill_node_count": len(server.prefill_instances),
-            "decode_node_count": len(server.decode_instances),
-            "prefill_nodes": server.prefill_instances,
-            "decode_nodes": server.decode_instances,
-        }
 
     async def add_instance_endpoint(
         request: Request,
@@ -129,9 +125,7 @@ def register(router: APIRouter, server) -> None:
             logger.exception("Error in remove_instance_endpoint")
             return error_response(f"Internal error: {exc}", SERVER_ERROR, 500)
 
-    router.get("/status", response_class=JSONResponse)(get_status)
     router.post("/instances/add")(add_instance_endpoint)
     router.post("/instances/remove")(remove_instance_endpoint)
-    router.options("/status")(lambda: None)
     router.options("/instances/add")(lambda: None)
     router.options("/instances/remove")(lambda: None)

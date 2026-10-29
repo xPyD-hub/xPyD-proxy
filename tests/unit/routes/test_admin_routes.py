@@ -10,9 +10,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 # First Party
-from xpyd.routes.admin import register
+from xpyd.routes import instances, status
 
 from ._helpers import build_app
+
+
+def register(router, server):
+    instances.register(router, server)
+    status.register(router, server)
+
 
 API_KEY = "s3cr3t"
 

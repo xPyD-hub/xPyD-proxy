@@ -16,9 +16,14 @@ from fastapi.testclient import TestClient
 
 # First Party
 from xpyd.proxy import Proxy
-from xpyd.routes.health import register
+from xpyd.routes import health, metrics, models, version
 
 from ._helpers import FakeResponse, build_app, fake_aiohttp, make_proxy
+
+
+def register(router, server):
+    for module in (health, models, version, metrics):
+        module.register(router, server)
 
 
 class _HealthServer:

@@ -12,25 +12,24 @@ The decode node's response is returned to the client (streaming or
 non-streaming).
 """
 
-import argparse
 import asyncio
 import json
 import logging
 import os
-import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import aiohttp
 import uvicorn
-from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from transformers import AutoTokenizer
 
+from xpyd.app import create_app
+from xpyd.cli import load_config
+from xpyd.completion_handler import D_first_token_generator, P_first_token_generator
 from xpyd.config import ProxyConfig
-from xpyd.discovery import NodeDiscovery
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_response
 from xpyd.health_monitor import HealthMonitor
 from xpyd.registry import InstanceRegistry
@@ -80,49 +79,6 @@ logger.propagate = False
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(
     total=None, connect=None, sock_read=None, sock_connect=None
 )
-
-
-async def P_first_token_generator(
-    generator_p: AsyncGenerator[bytes, None],
-    generator_d: AsyncGenerator[bytes, None],
-    release_prefill: Callable[[], None],
-    release_decode: Callable[[], None],
-) -> AsyncGenerator[bytes, None]:
-    first_decode = True
-
-    try:
-        async for chunk in generator_p:
-            yield chunk
-    finally:
-        release_prefill()
-
-    try:
-        async for chunk in generator_d:
-            if first_decode:
-                first_decode = False
-                continue
-            yield chunk
-    finally:
-        release_decode()
-
-
-async def D_first_token_generator(
-    generator_p: AsyncGenerator[bytes, None],
-    generator_d: AsyncGenerator[bytes, None],
-    release_prefill: Callable[[], None],
-    release_decode: Callable[[], None],
-) -> AsyncGenerator[bytes, None]:
-    try:
-        async for _ in generator_p:
-            continue
-    finally:
-        release_prefill()
-
-    try:
-        async for chunk in generator_d:
-            yield chunk
-    finally:
-        release_decode()
 
 
 class Proxy:
@@ -950,94 +906,7 @@ class ProxyServer:
         )
 
     def run_server(self) -> None:
-        discovery = NodeDiscovery(
-            prefill_instances=self._all_prefill,
-            decode_instances=self._all_decode,
-            probe_interval=self.config.probe_interval_seconds,
-            wait_timeout=self.config.wait_timeout_seconds,
-            heartbeat_interval=self.config.heartbeat_interval_seconds,
-            registry=self.registry,
-            aggregated_instances=self._all_aggregated,
-            on_model_discovered=lambda model: asyncio.to_thread(
-                self.proxy_instance.ensure_tokenizer, model
-            ),
-        )
-        self.proxy_instance.discovery = discovery
-        self.proxy_instance.health_monitor = self.health_monitor
-
-        app = FastAPI()
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=False,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
-        @app.middleware("http")
-        async def _check_readiness(request: Request, call_next):
-            # Allow health/status/metrics endpoints through always
-            path = request.url.path
-            if path in (
-                "/health",
-                "/ping",
-                "/status",
-                "/metrics",
-                "/instances/add",
-                "/instances/remove",
-            ) or path.startswith("/status/"):
-                return await call_next(request)
-            if not discovery.is_ready:
-                return error_response("Waiting for backend nodes", PROXY_ERROR, 503)
-            return await call_next(request)
-
-        @app.on_event("startup")
-        async def _start_discovery():
-            if self.config.disaggregated_mode == "zmq":
-                from xpyd.zmq_notifications import ZmqNotificationListener
-
-                zmq_config = self.config.zmq
-                assert zmq_config is not None
-                listener = ZmqNotificationListener(
-                    zmq_config.host,
-                    zmq_config.port,
-                    zmq_config.notification_timeout_seconds,
-                )
-                await listener.start()
-                self.proxy_instance.zmq_notifications = listener
-            await discovery.start()
-            if self.health_monitor:
-                await self.health_monitor.start()
-
-        @app.on_event("shutdown")
-        async def _stop_discovery():
-            await discovery.stop()
-            if self.proxy_instance.zmq_notifications is not None:
-                await self.proxy_instance.zmq_notifications.stop()
-            if self.health_monitor:
-                await self.health_monitor.stop()
-
-        @app.get("/status/instances")
-        async def _instance_status():
-            """Return per-instance health and circuit breaker state."""
-            result: dict[str, list] = {
-                "prefill_instances": [],
-                "decode_instances": [],
-                "aggregated_instances": [],
-            }
-            for info in self.registry.get_all_instances():
-                result[f"{info.role}_instances"].append(
-                    {
-                        "address": info.address,
-                        "status": info.status.value,
-                        "circuit": info.circuit_breaker_state.value,
-                        "active_requests": info.active_request_count,
-                        "last_check": info.last_health_check,
-                    }
-                )
-            return JSONResponse(result)
-
-        app.include_router(self.proxy_instance.router)
+        app = create_app(self.config, self.proxy_instance, self.health_monitor)
         config = uvicorn.Config(
             app,
             host=self.config.host,
@@ -1049,267 +918,12 @@ class ProxyServer:
         server.run()
 
 
-_VERSION = "1.8.0"
-
-
-def _valid_port(value: str) -> int:
-    """Parse a TCP port for argparse with a concise user-facing error."""
-    try:
-        port = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("port must be an integer") from exc
-    if not 1 <= port <= 65535:
-        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
-    return port
-
-
-def _build_parser():
-    """Build the subcommand argument parser for the proxy CLI."""
-    parser = argparse.ArgumentParser(
-        prog="xpyd",
-        description="xPyD — lightweight disaggregated proxy server",
-    )
-    parser.add_argument(
-        "--version",
-        "-V",
-        action="version",
-        version=f"%(prog)s {_VERSION}",
-    )
-
-    subparsers = parser.add_subparsers(dest="command")
-
-    proxy_parser = subparsers.add_parser(
-        "proxy",
-        prog="xpyd [proxy]",
-        help="Start the proxy server (default command)",
-    )
-    proxy_parser.add_argument(
-        "--config",
-        "-c",
-        type=str,
-        default=None,
-        help="Path to YAML configuration file",
-    )
-    proxy_parser.add_argument(
-        "--validate-config",
-        type=str,
-        default=None,
-        metavar="FILE",
-        help="Validate YAML config and exit (no server start)",
-    )
-    proxy_parser.add_argument(
-        "--init-config",
-        nargs="?",
-        const="./xpyd.yaml",
-        default=None,
-        metavar="PATH",
-        help="Generate xpyd.yaml, optionally through an interactive wizard "
-        "(default path: ./xpyd.yaml)",
-    )
-    proxy_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite an existing --init-config destination",
-    )
-    proxy_parser.add_argument(
-        "--port",
-        type=_valid_port,
-        default=None,
-        help="Override the port from config",
-    )
-    proxy_parser.add_argument(
-        "--log-level",
-        choices=("debug", "info", "warning", "error"),
-        default=None,
-        dest="log_level",
-        help="Override log level: debug|info|warning|error",
-    )
-    proxy_parser.add_argument(
-        "--disaggregated-mode",
-        choices=("direct", "nixl", "zmq"),
-        default=None,
-        help="disaggregated transfer mode (default: config value or direct)",
-    )
-    proxy_parser.add_argument(
-        "--first-token-source",
-        choices=("prefill", "decode"),
-        default=None,
-        help="Backend that provides the first client-visible token",
-    )
-
-    # fix-config subcommand
-    fix_parser = subparsers.add_parser(
-        "fix-config",
-        help="Auto-fix common config mistakes",
-    )
-    fix_parser.add_argument(
-        "config_path",
-        type=str,
-        help="Path to YAML configuration file to fix",
-    )
-    fix_parser.add_argument(
-        "--write",
-        action="store_true",
-        default=False,
-        help="Write fixes back to the file (creates timestamped .bak backup). "
-        "Note: does not preserve YAML comments or formatting.",
-    )
-    fix_parser.add_argument(
-        "--interactive",
-        action="store_true",
-        default=False,
-        help="Interactively acknowledge ambiguous suggestions one by one",
-    )
-
-    return parser
-
-
-def _normalize_cli_args(argv: list[str]) -> list[str]:
-    """Treat omitted subcommands as the default ``proxy`` command."""
-    if argv and argv[0] == "proxy":
-        if len(argv) > 1 and argv[1] in {"fix-config", "--version", "-V"}:
-            return argv[1:]
-        return argv
-    if argv and argv[0] in {"fix-config", "--version", "-V"}:
-        return argv
-    return ["proxy", *argv]
-
-
-def _resolve_config_path(args):
-    """Resolve the config file path: --config > XPYD_CONFIG env > ./xpyd.yaml.
-
-    Returns the path string, or ``None`` when no config can be found.
-    """
-    if args.config:
-        return args.config
-    env_config = os.environ.get("XPYD_CONFIG")
-    if env_config:
-        return env_config
-    default_path = "./xpyd.yaml"
-    if os.path.exists(default_path):
-        print(
-            "No config specified; found ./xpyd.yaml and using it.",
-            flush=True,
-        )
-        return default_path
-    return None
-
-
-def _print_config_summary(config: ProxyConfig) -> None:
-    """Print topology-aware details for a validated configuration."""
-    if config.instances is None:
-        topology = "disaggregated" if config.prefill else "decode-only"
-        print(f"  topology: {topology}")
-        if config.prefill:
-            print(f"  transfer: {config.disaggregated_mode}")
-        print(f"  model: {config.model}")
-        print(f"  prefill: {len(config.prefill)} instances")
-        print(f"  decode: {len(config.decode)} instances")
-    else:
-        roles = {instance.role for instance in config.instances}
-        topology = "aggregated" if roles == {"aggregated"} else "disaggregated"
-        print(f"  topology: {topology}")
-        if topology == "disaggregated":
-            print(f"  transfer: {config.disaggregated_mode}")
-        models = sorted(
-            {instance.model for instance in config.instances if instance.model}
-        )
-        print(f"  models: {', '.join(models) if models else 'auto-detected'}")
-        for role in ("aggregated", "prefill", "decode"):
-            count = sum(instance.role == role for instance in config.instances)
-            if count:
-                print(f"  {role}: {count} instances")
-    print(f"  port: {config.port}")
-    print(f"  log_level: {config.log_level}")
-
-
-def _apply_cli_overrides(config: ProxyConfig, args) -> ProxyConfig:
-    """Apply explicitly supplied CLI values and revalidate the result."""
-    overrides = {
-        field: value
-        for field in (
-            "port",
-            "log_level",
-            "disaggregated_mode",
-            "first_token_source",
-        )
-        if (value := getattr(args, field, None)) is not None
-    }
-    if not overrides:
-        return config
-
-    model_schedulers = config._model_schedulers.copy()
-    updated = ProxyConfig.model_validate({**config.model_dump(), **overrides})
-    updated._model_schedulers = model_schedulers
-    return updated
-
-
 def main() -> None:
     """Entry point for the ``xpyd`` CLI."""
-    from xpyd.init_config import generate_config
-
-    parser = _build_parser()
-    args = parser.parse_args(_normalize_cli_args(sys.argv[1:]))
-
-    if args.command == "fix-config":
-        from xpyd.config_fixer import run_fix_config
-
-        sys.exit(
-            run_fix_config(
-                args.config_path,
-                write=args.write,
-                interactive=args.interactive,
-            )
-        )
-    elif args.command == "proxy":
-        if args.force and args.init_config is None:
-            parser.error("--force can only be used with --init-config")
-
-        # --init-config: generate template and exit
-        if args.init_config is not None:
-            output_path = Path(args.init_config)
-            if output_path.exists() and not args.force:
-                parser.error(
-                    f"config already exists: {output_path}; use --force to overwrite"
-                )
-            try:
-                generate_config(args.init_config)
-            except OSError as exc:
-                parser.exit(1, f"xpyd: failed to write config: {exc}\n")
-            return
-
-        # --validate-config: validate and exit
-        if args.validate_config:
-            config_path = args.validate_config
-            try:
-                config = ProxyConfig.from_yaml(config_path)
-                print(f"Config is valid: {config_path}")
-                _print_config_summary(config)
-                sys.exit(0)
-            except Exception as exc:
-                print(f"Config validation failed: {exc}", file=sys.stderr)
-                sys.exit(1)
-
-        # Resolve config path with precedence
-        config_path = _resolve_config_path(args)
-        if config_path is None:
-            config_path = "./xpyd.yaml"
-            print(
-                "No config specified and ./xpyd.yaml was not found; "
-                "starting config initialization."
-            )
-            generate_config(config_path)
-            return
-        try:
-            config = ProxyConfig.from_yaml(config_path)
-            config = _apply_cli_overrides(config, args)
-        except (OSError, ValueError) as exc:
-            parser.exit(1, f"xpyd: failed to load config: {exc}\n")
-
+    config = load_config()
+    if config is not None:
         proxy_server = ProxyServer(config=config)
         proxy_server.run_server()
-    else:
-        parser.print_help()
 
 
 if __name__ == "__main__":

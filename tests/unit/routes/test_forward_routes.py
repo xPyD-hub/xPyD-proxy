@@ -10,9 +10,31 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 # First Party
-from xpyd.routes.forward import register
+from xpyd.routes import (
+    detokenize,
+    embeddings,
+    invocations,
+    pooling,
+    rerank,
+    score,
+    tokenize,
+)
 
 from ._helpers import build_app
+
+
+def register(router, server):
+    for module in (
+        tokenize,
+        detokenize,
+        embeddings,
+        pooling,
+        score,
+        rerank,
+        invocations,
+    ):
+        module.register(router, server)
+
 
 # (route, forwarded path, expected json template, a valid request body)
 ENDPOINTS = [
