@@ -24,10 +24,23 @@ def test_support_modules_do_not_import_proxy_runtime():
             "-c",
             "\n".join(
                 [
-                    "import importlib, sys",
+                    "import importlib, inspect, pkgutil, sys, typing",
                     "for name in ('xpyd.cli', 'xpyd.app', 'xpyd.routes',",
-                    "             'xpyd.completion_handler'):",
-                    "    importlib.import_module(name)",
+                    "             'xpyd.completion_handler', 'xpyd.interfaces'):",
+                    "    module = importlib.import_module(name)",
+                    "    assert 'xpyd.proxy' not in sys.modules, name",
+                    "    modules = [module]",
+                    "    if hasattr(module, '__path__'):",
+                    "        modules += [importlib.import_module(item.name)",
+                    "                    for item in pkgutil.iter_modules(",
+                    "                        module.__path__, module.__name__ + '.')]",
+                    "    for item in modules:",
+                    "        for value in vars(item).values():",
+                    "            if (inspect.isfunction(value)",
+                    "                    and value.__module__ == item.__name__):",
+                    "                typing.get_type_hints(value)",
+                    "                parameters = inspect.signature(value).parameters",
+                    "                assert not {'proxy', 'server'} & set(parameters)",
                     "    assert 'xpyd.proxy' not in sys.modules, name",
                 ]
             ),
@@ -78,8 +91,8 @@ def test_proxy_first_discovery_loss_and_reconnection(topology):
         yield json.dumps({"choices": [{"text": "ok"}]}).encode()
 
     proxy.forward_request = forward
-    app = create_app(config, proxy, server.health_monitor)
-    discovery = proxy.discovery
+    app = server.create_app()
+    discovery = server.discovery
     monitor = server.health_monitor
     assert discovery._task is None
     assert monitor._task is None
@@ -226,24 +239,19 @@ def test_zmq_lifecycle_order():
         health_check={"enabled": True},
     )
     server = ProxyServer(config)
-    proxy = server.proxy_instance
-    app = create_app(config, proxy, server.health_monitor)
     events = []
     listener = Mock(
         start=AsyncMock(side_effect=lambda: events.append("listener:start")),
         stop=AsyncMock(side_effect=lambda: events.append("listener:stop")),
     )
     with (
-        patch(
-            "xpyd.zmq_notifications.ZmqNotificationListener", return_value=listener
-        ) as factory,
         patch.object(
-            proxy.discovery,
+            server.discovery,
             "start",
             AsyncMock(side_effect=lambda: events.append("discovery:start")),
         ),
         patch.object(
-            proxy.discovery,
+            server.discovery,
             "stop",
             AsyncMock(side_effect=lambda: events.append("discovery:stop")),
         ),
@@ -258,13 +266,15 @@ def test_zmq_lifecycle_order():
             AsyncMock(side_effect=lambda: events.append("health:stop")),
         ),
     ):
+        app = create_app(
+            server.proxy_instance.router,
+            discovery=server.discovery,
+            health_monitor=server.health_monitor,
+            zmq_notifications=listener,
+        )
         assert events == []
         with TestClient(app):
-            assert proxy.zmq_notifications is listener
             assert events == ["listener:start", "discovery:start", "health:start"]
-        factory.assert_called_once_with(
-            config.zmq.host, config.zmq.port, config.zmq.notification_timeout_seconds
-        )
     assert events == [
         "listener:start",
         "discovery:start",
@@ -273,3 +283,62 @@ def test_zmq_lifecycle_order():
         "listener:stop",
         "health:stop",
     ]
+
+
+def test_zmq_route_uses_composed_listener():
+    config = ProxyConfig(
+        model="example",
+        prefill=["127.0.0.1:18100"],
+        decode=["127.0.0.1:18200"],
+        scheduling="roundrobin",
+        disaggregated_mode="zmq",
+        zmq={
+            "receivers": {
+                "127.0.0.1:18200": {
+                    "host": "127.0.0.1",
+                    "init_ports": [7300],
+                    "alloc_ports": [7400],
+                }
+            }
+        },
+    )
+    server = ProxyServer(config)
+    server.discovery.healthy_prefill.update(config.prefill)
+    server.discovery.healthy_decode.update(config.decode)
+    listener = server.zmq_notifications
+    forwarded = []
+
+    async def forward(url, data, **kwargs):
+        forwarded.append((url, data))
+        yield b'{"choices":[{"text":"ok"}]}'
+
+    server.proxy_instance.forward_request = forward
+    server.proxy_instance.tokenize_on_backend = AsyncMock(return_value=[1, 2])
+    with (
+        patch.object(server.discovery, "start", AsyncMock()),
+        patch.object(server.discovery, "stop", AsyncMock()),
+        patch.object(listener, "start", AsyncMock()) as start,
+        patch.object(listener, "stop", AsyncMock()) as stop,
+        patch.object(listener, "register", AsyncMock()) as register,
+        patch.object(listener, "wait", AsyncMock()) as wait,
+    ):
+        with TestClient(server.create_app()) as client:
+            response = client.post(
+                "/v1/completions",
+                json={"model": "example", "prompt": "hello", "max_tokens": 2},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["choices"][0]["text"] == "ok"
+        start.assert_awaited_once()
+        stop.assert_awaited_once()
+        request_id = forwarded[0][1]["kv_transfer_params"]["disagg_spec"]["req_id"]
+        register.assert_awaited_once_with(request_id)
+        wait.assert_awaited_once_with(request_id, 1)
+    assert [url for url, _ in forwarded] == [
+        "http://127.0.0.1:18100/v1/completions",
+        "http://127.0.0.1:18200/v1/completions",
+    ]
+    assert all(
+        server.registry.get_active_requests(address) == 0
+        for address in config.prefill + config.decode
+    )

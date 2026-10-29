@@ -1,22 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """The /health and /ping endpoints."""
 
-from typing import TYPE_CHECKING
-
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
+from xpyd.interfaces import GetFromInstance
 
 
-def register(router: APIRouter, server: "Proxy") -> None:
+def register(router: APIRouter, *, fetch: GetFromInstance) -> None:
 
     async def get_health():
-        return await server.get_from_instance("/health", is_full_instancelist=1)
+        return await fetch("/health", is_full_instancelist=1)
 
     async def get_ping():
-        return await server.get_from_instance("/ping", is_full_instancelist=1)
+        return await fetch("/ping", is_full_instancelist=1)
 
     router.get("/health", response_class=PlainTextResponse)(get_health)
     router.get("/ping", response_class=PlainTextResponse)(get_ping)

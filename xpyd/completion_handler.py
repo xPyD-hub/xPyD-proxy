@@ -9,12 +9,21 @@ import sys
 import time
 import uuid
 from asyncio import CancelledError
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from xpyd.config import ZmqConfig, ZmqReceiverConfig
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
+from xpyd.interfaces import (
+    CountTokens,
+    ForwardRequest,
+    Notifications,
+    TokenizeOnBackend,
+    Tokenizer,
+)
 from xpyd.metrics import (
     FirstTokenTracker,
     proxy_decode_active_requests,
@@ -31,10 +40,35 @@ from xpyd.scheduler import Reservation, SchedulingContext
 
 logger = logging.getLogger("xpyd.proxy")
 
+FirstTokenGenerator = Callable[
+    [
+        AsyncIterator[bytes],
+        AsyncIterator[bytes],
+        Callable[[], None],
+        Callable[[], None],
+    ],
+    AsyncGenerator[bytes, None],
+]
+
+
+@dataclass(frozen=True)
+class CompletionOptions:
+    disaggregated_mode: str = "direct"
+    first_token_source: str = "decode"
+    zmq: ZmqConfig | None = None
+
+
+def _record_failures(
+    record_failure: Callable[[str], None] | None, *instances: str
+) -> None:
+    if record_failure is not None:
+        for instance in instances:
+            record_failure(instance)
+
 
 async def P_first_token_generator(
-    generator_p: AsyncGenerator[bytes, None],
-    generator_d: AsyncGenerator[bytes, None],
+    generator_p: AsyncIterator[bytes],
+    generator_d: AsyncIterator[bytes],
     release_prefill: Callable[[], None],
     release_decode: Callable[[], None],
 ) -> AsyncGenerator[bytes, None]:
@@ -57,8 +91,8 @@ async def P_first_token_generator(
 
 
 async def D_first_token_generator(
-    generator_p: AsyncGenerator[bytes, None],
-    generator_d: AsyncGenerator[bytes, None],
+    generator_p: AsyncIterator[bytes],
+    generator_d: AsyncIterator[bytes],
     release_prefill: Callable[[], None],
     release_decode: Callable[[], None],
 ) -> AsyncGenerator[bytes, None]:
@@ -113,7 +147,7 @@ class _RequestReservation:
 
 
 # ---------------------------------------------------------------------------
-# Pure helper functions (no server dependency or explicit server param)
+# Request preparation helpers
 # ---------------------------------------------------------------------------
 
 
@@ -135,7 +169,7 @@ def validate_completion_request(request: dict, is_chat: bool) -> JSONResponse | 
 
 
 def extract_prompt_info(
-    request: dict, is_chat: bool, server: "Proxy"  # noqa: F821
+    request: dict, is_chat: bool, count_tokens: CountTokens
 ) -> tuple[int, int, str]:
     """Extract prompt metrics. Returns (total_length, max_tokens, prompt_text)."""
     model = request.get("model", "")
@@ -147,13 +181,13 @@ def extract_prompt_info(
             if content is None:
                 continue
             if isinstance(content, str):
-                total_length += server.get_total_token_length(content, model)
+                total_length += count_tokens(content, model)
                 prompt_parts.append(content)
             elif isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
                         text = part.get("text", "")
-                        total_length += server.get_total_token_length(text, model)
+                        total_length += count_tokens(text, model)
                         prompt_parts.append(text)
         max_tokens = request.get("max_completion_tokens", 0)
         if max_tokens == 0:
@@ -161,7 +195,7 @@ def extract_prompt_info(
         prompt_text = " ".join(prompt_parts)
     else:
         prompt = request.get("prompt")
-        total_length = server.get_total_token_length(prompt, model)
+        total_length = count_tokens(prompt, model)
         max_tokens = request.get("max_tokens", 0)
         prompt_text = prompt if isinstance(prompt, str) else str(prompt)
     return total_length, max_tokens, prompt_text
@@ -195,7 +229,7 @@ def build_zmq_prepare_request(
     request: dict,
     prompt_tokens: list[int],
     request_id: str,
-    receiver,
+    receiver: ZmqReceiverConfig,
     first_token_source: str,
     is_chat: bool = False,
 ) -> dict:
@@ -223,10 +257,9 @@ def build_zmq_prepare_request(
 
 
 def tokenize_zmq_prompt(
-    request: dict, is_chat: bool, server: "Proxy"  # noqa: F821
+    request: dict, is_chat: bool, tokenizer: Tokenizer | None
 ) -> list[int]:
     """Tokenize the exact prompt used by the LMCache sender and receiver."""
-    tokenizer = server.get_tokenizer(request.get("model", ""))
     if tokenizer is None:
         raise ValueError(
             "ZMQ prompt tokenization requires a tokenizer for model "
@@ -540,10 +573,23 @@ async def _zmq_prefill_only_generator(
 
 
 async def handle_completion(
-    endpoint: str,
     raw_request: Request,
-    server: "Proxy",  # noqa: F821
+    *,
+    endpoint: str,
     is_chat: bool,
+    reserve: Callable[[SchedulingContext], Reservation | None],
+    forward_request: ForwardRequest,
+    count_tokens: CountTokens,
+    get_tokenizer: Callable[[str], Tokenizer | None],
+    tokenize_on_backend: TokenizeOnBackend,
+    is_aggregated_model: Callable[[str], bool],
+    options: CompletionOptions,
+    get_registered_models: Callable[[], list[str]] | None = None,
+    record_success: Callable[[str], None] | None = None,
+    record_failure: Callable[[str], None] | None = None,
+    notifications: Notifications | None = None,
+    stream_generator: FirstTokenGenerator | None = None,
+    nonstream_generator: FirstTokenGenerator = D_first_token_generator,
 ) -> JSONResponse | StreamingResponse:
     """Unified completion handler for both /v1/completions and /v1/chat/completions."""
     _metrics_start = track_request_start(endpoint)
@@ -569,7 +615,7 @@ async def handle_completion(
 
         start_time = time.time()
         total_length, max_tokens, prompt_text = extract_prompt_info(
-            request, is_chat, server
+            request, is_chat, count_tokens
         )
         end_time = time.time()
         elapsed_ms = (end_time - start_time) * 1000
@@ -587,33 +633,38 @@ async def handle_completion(
         model_label = requested_model or "unknown"
 
         # Aggregated-role fast path: single forward, no P→D split
-        if server._is_aggregated_model(requested_model):
+        if is_aggregated_model(requested_model):
             return await _handle_aggregated_completion(
                 endpoint,
                 request,
                 raw_request,
-                server,
                 requested_model,
                 total_length,
                 max_tokens,
                 prompt_text,
                 _metrics_start,
                 handler_name,
+                reserve=reserve,
+                forward_request=forward_request,
+                get_registered_models=get_registered_models,
+                record_success=record_success,
+                record_failure=record_failure,
             )
         zmq_prompt_tokens = None
-        if server.disaggregated_mode == "zmq":
-            if server.get_tokenizer(requested_model) is None:
-                zmq_prompt_tokens = await server.tokenize_on_backend(request, is_chat)
+        if options.disaggregated_mode == "zmq":
+            tokenizer = get_tokenizer(requested_model)
+            if tokenizer is None:
+                zmq_prompt_tokens = await tokenize_on_backend(request, is_chat)
             else:
-                zmq_prompt_tokens = tokenize_zmq_prompt(request, is_chat, server)
+                zmq_prompt_tokens = tokenize_zmq_prompt(request, is_chat, tokenizer)
             total_length = len(zmq_prompt_tokens)
         kv_prepare_request = build_kv_prepare_request(
             request,
             is_chat,
-            server.disaggregated_mode,
+            options.disaggregated_mode,
         )
         upstream_headers = None
-        if server.disaggregated_mode == "nixl":
+        if options.disaggregated_mode == "nixl":
             request_id = raw_request.headers.get("x-request-id") or str(uuid.uuid4())
             upstream_headers = {"X-Request-Id": request_id}
 
@@ -632,7 +683,7 @@ async def handle_completion(
         }
 
         reservation = _RequestReservation()
-        reservation.prefill = server.reserve(
+        reservation.prefill = reserve(
             SchedulingContext(
                 role="prefill",
                 request_len=total_length,
@@ -640,7 +691,7 @@ async def handle_completion(
                 **_sched_kwargs,
             )
         )
-        reservation.decode = server.reserve(
+        reservation.decode = reserve(
             SchedulingContext(
                 role="decode",
                 request_len=total_length,
@@ -664,8 +715,8 @@ async def handle_completion(
             reservation.release_all()
             # Check for unknown model first to return a clean 404 without
             # triggering error-path side effects (logging, metrics, etc.)
-            if requested_model and server.registry is not None:
-                known_models = server.registry.get_registered_models()
+            if requested_model and get_registered_models is not None:
+                known_models = get_registered_models()
                 if requested_model not in known_models:
                     return error_response(
                         f"The model '{requested_model}' does not exist",
@@ -683,13 +734,13 @@ async def handle_completion(
 
         zmq_request_id = None
         zmq_wait_for_notification = False
-        if server.disaggregated_mode == "zmq":
-            if server.zmq_notifications is None or server.zmq_config is None:
+        if options.disaggregated_mode == "zmq":
+            if notifications is None or options.zmq is None:
                 raise HTTPException(
                     status_code=503,
                     detail="ZMQ notification listener is not ready",
                 )
-            receiver = server.zmq_config.receivers[decode_instance]
+            receiver = options.zmq.receivers[decode_instance]
             zmq_request_id = str(uuid.uuid4())
             assert zmq_prompt_tokens is not None
             kv_prepare_request = build_zmq_prepare_request(
@@ -697,11 +748,11 @@ async def handle_completion(
                 zmq_prompt_tokens,
                 zmq_request_id,
                 receiver,
-                server.first_token_source,
+                options.first_token_source,
                 is_chat,
             )
             zmq_wait_for_notification = True
-            await server.zmq_notifications.register(zmq_request_id)
+            await notifications.register(zmq_request_id)
 
         # Track per-instance request counters
         proxy_prefill_requests_total.labels(
@@ -729,16 +780,16 @@ async def handle_completion(
 
         value = b""
         try:
-            async for chunk in server.forward_request(
+            async for chunk in forward_request(
                 f"http://{prefill_instance}"
-                f"{'/v1/completions' if server.disaggregated_mode == 'zmq' else endpoint}",  # noqa: E501
+                f"{'/v1/completions' if options.disaggregated_mode == 'zmq' else endpoint}",  # noqa: E501
                 kv_prepare_request,
                 extra_headers=upstream_headers,
             ):
                 value += chunk
         except CancelledError:
             if zmq_wait_for_notification and zmq_request_id is not None:
-                await server.zmq_notifications.discard(zmq_request_id)
+                await notifications.discard(zmq_request_id)
             proxy_prefill_active_requests.labels(
                 prefill_instance=prefill_instance,
                 decode_instance=decode_instance,
@@ -747,9 +798,9 @@ async def handle_completion(
             raise
         except HTTPException as http_exc:
             if zmq_wait_for_notification and zmq_request_id is not None:
-                await server.zmq_notifications.discard(zmq_request_id)
+                await notifications.discard(zmq_request_id)
             reservation.release_all()
-            server._record_failure(prefill_instance, decode_instance)
+            _record_failures(record_failure, prefill_instance, decode_instance)
             proxy_instance_errors_total.labels(
                 instance=prefill_instance,
                 error_type="prefill_forward_error",
@@ -778,7 +829,7 @@ async def handle_completion(
         value = (
             value.strip().decode("utf-8").removesuffix("data: [DONE]").encode("utf-8")
         )
-        if server.disaggregated_mode == "nixl":
+        if options.disaggregated_mode == "nixl":
             try:
                 prefill_output = json.loads(value)
             except json.JSONDecodeError as exc:
@@ -794,26 +845,26 @@ async def handle_completion(
                 )
             request = request.copy()
             request["kv_transfer_params"] = kv_transfer_params
-        elif server.disaggregated_mode == "zmq":
+        elif options.disaggregated_mode == "zmq":
             prefill_output = None
             first_token = None
-            if server.first_token_source == "prefill":
+            if options.first_token_source == "prefill":
                 try:
                     prefill_output = json.loads(value)
                     first_token = prefill_output["kv_transfer_params"]["first_tok"]
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     assert zmq_request_id is not None
-                    await server.zmq_notifications.discard(zmq_request_id)
+                    await notifications.discard(zmq_request_id)
                     raise HTTPException(
                         status_code=502,
                         detail=(
                             "Prefill response did not contain an LMCache " "first token"
                         ),
                     ) from exc
-            receiver = server.zmq_config.receivers[decode_instance]
+            receiver = options.zmq.receivers[decode_instance]
             if zmq_wait_for_notification:
                 try:
-                    await server.zmq_notifications.wait(
+                    await notifications.wait(
                         zmq_request_id,
                         len(receiver.init_ports),
                     )
@@ -834,8 +885,8 @@ async def handle_completion(
                 is_chat,
             )
 
-        if server.registry is not None:
-            server.registry.record_success(prefill_instance)
+        if record_success is not None:
+            record_success(prefill_instance)
 
         async def streaming_response(value):
             if value:
@@ -844,8 +895,8 @@ async def handle_completion(
                 yield b""
 
         prefill_only = (
-            server.disaggregated_mode == "zmq"
-            and server.first_token_source == "prefill"
+            options.disaggregated_mode == "zmq"
+            and options.first_token_source == "prefill"
             and max_tokens == 1
         )
         if prefill_only:
@@ -860,11 +911,11 @@ async def handle_completion(
             first_token_from_p = True
         else:
             generator_p = streaming_response(value)
-            # server.forward_request() is an async generator; HTTP errors
+            # forward_request() is an async generator; HTTP errors
             # surface only when wrapped_generator() iterates it.
-            generator_d_raw = server.forward_request(
+            generator_d_raw = forward_request(
                 f"http://{decode_instance}"
-                f"{'/v1/completions' if server.disaggregated_mode == 'zmq' and is_chat else endpoint}",  # noqa: E501
+                f"{'/v1/completions' if options.disaggregated_mode == 'zmq' and is_chat else endpoint}",  # noqa: E501
                 request,
                 extra_headers=upstream_headers,
             )
@@ -872,8 +923,8 @@ async def handle_completion(
             generator_d = decode_tracker
 
             if (
-                server.disaggregated_mode == "zmq"
-                and server.first_token_source == "prefill"
+                options.disaggregated_mode == "zmq"
+                and options.first_token_source == "prefill"
             ):
                 assert prefill_output is not None
                 if request.get("stream", False):
@@ -892,22 +943,26 @@ async def handle_completion(
                     )
                 first_token_from_p = True
             else:
-                if server.disaggregated_mode == "zmq" and is_chat:
+                if options.disaggregated_mode == "zmq" and is_chat:
                     generator_d = (
                         _chat_completion_stream(generator_d)
                         if request.get("stream", False)
                         else _chat_completion_nonstream(generator_d)
                     )
                 if request.get("stream", False):
-                    generator_class = server.generator
+                    generator_class = stream_generator or (
+                        P_first_token_generator
+                        if options.first_token_source == "prefill"
+                        else D_first_token_generator
+                    )
                 else:
-                    generator_class = server.d_first_token_generator_class
+                    generator_class = nonstream_generator
                 # Determine if user's first token comes from prefill or decode node.
                 # P_first_token_generator yields P's token first;
                 # D_first_token_generator
                 # discards P's token and yields D's tokens only.
                 first_token_from_p = (
-                    server.first_token_source == "prefill"
+                    options.first_token_source == "prefill"
                     and generator_class is P_first_token_generator
                 )
                 final_generator = generator_class(
@@ -924,8 +979,8 @@ async def handle_completion(
             try:
                 async for chunk in final_generator:
                     yield chunk
-                if server.registry is not None and not prefill_only:
-                    server.registry.record_success(decode_instance)
+                if record_success is not None and not prefill_only:
+                    record_success(decode_instance)
             except CancelledError:
                 logger.warning(
                     "[0]Client disconnected during %s (CancelledError)",
@@ -933,7 +988,7 @@ async def handle_completion(
                 )
             except HTTPException as http_exc:
                 reservation.release_all()
-                server._record_failure(prefill_instance, decode_instance)
+                _record_failures(record_failure, prefill_instance, decode_instance)
                 proxy_instance_errors_total.labels(
                     instance=decode_instance,
                     error_type="decode_forward_error",
@@ -1011,16 +1066,21 @@ async def _handle_aggregated_completion(
     endpoint: str,
     request: dict,
     raw_request: Request,
-    server: "Proxy",  # noqa: F821
     model: str,
     total_length: int,
     max_tokens: int,
     prompt_text: str,
     metrics_start: float,
     handler_name: str,
+    *,
+    reserve: Callable[[SchedulingContext], Reservation | None],
+    forward_request: ForwardRequest,
+    get_registered_models: Callable[[], list[str]] | None,
+    record_success: Callable[[str], None] | None,
+    record_failure: Callable[[str], None] | None,
 ) -> JSONResponse | StreamingResponse:
     """Single-pass completion for aggregated-role instances."""
-    reservation = server.reserve(
+    reservation = reserve(
         SchedulingContext(
             role="aggregated",
             model=model,
@@ -1050,8 +1110,8 @@ async def _handle_aggregated_completion(
     if instance is None:
         track_request_end(endpoint, metrics_start)
         # Check for unknown model
-        if model and server.registry is not None:
-            known_models = server.registry.get_registered_models()
+        if model and get_registered_models is not None:
+            known_models = get_registered_models()
             if model not in known_models:
                 return error_response(
                     f"The model '{model}' does not exist",
@@ -1067,7 +1127,7 @@ async def _handle_aggregated_completion(
     url = f"http://{instance}{endpoint}"
 
     if request.get("stream", False):
-        generator = server.forward_request(url, request)
+        generator = forward_request(url, request)
 
         async def wrapped():
             _ok = False
@@ -1084,22 +1144,22 @@ async def _handle_aggregated_completion(
             except Exception as e:
                 _ok = False
                 logger.error("Exception in aggregated stream: %s", str(e))
-                if server.registry is not None:
-                    server.registry.record_failure(instance)
+                if record_failure is not None:
+                    record_failure(instance)
                 raise
             finally:
                 reservation.release()
-                if _ok and server.registry is not None:
-                    server.registry.record_success(instance)
+                if _ok and record_success is not None:
+                    record_success(instance)
                 track_request_end(endpoint, metrics_start)
 
         return StreamingResponse(wrapped(), media_type="text/event-stream")
     else:
-        # Non-streaming: forward request using server.forward_request()
+        # Non-streaming: forward request using forward_request()
         # for consistent auth, timeouts, and connection handling.
         try:
             value = b""
-            async for chunk in server.forward_request(url, request):
+            async for chunk in forward_request(url, request):
                 value += chunk
             data = json.loads(value)
             # Detect error responses from upstream. forward_request yields
@@ -1123,16 +1183,16 @@ async def _handle_aggregated_completion(
             else:
                 status_code = 200
             reservation.release()
-            if status_code < 400 and server.registry is not None:
-                server.registry.record_success(instance)
-            elif status_code >= 400 and server.registry is not None:
-                server.registry.record_failure(instance)
+            if status_code < 400 and record_success is not None:
+                record_success(instance)
+            elif status_code >= 400 and record_failure is not None:
+                record_failure(instance)
             track_request_end(endpoint, metrics_start)
             return JSONResponse(data, status_code=status_code)
         except HTTPException as http_exc:
             reservation.release()
-            if server.registry is not None:
-                server.registry.record_failure(instance)
+            if record_failure is not None:
+                record_failure(instance)
             track_request_end(endpoint, metrics_start)
             return error_response(
                 str(http_exc.detail),
@@ -1145,8 +1205,8 @@ async def _handle_aggregated_completion(
         except Exception as e:
             logger.error("Error in aggregated non-streaming: %s", str(e))
             reservation.release()
-            if server.registry is not None:
-                server.registry.record_failure(instance)
+            if record_failure is not None:
+                record_failure(instance)
             track_request_end(endpoint, metrics_start)
             return error_response(
                 "Internal proxy error",

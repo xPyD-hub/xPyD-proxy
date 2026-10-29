@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
 from xpyd.completion_handler import (
+    CompletionOptions,
     _chat_completion_nonstream,
     _chat_completion_stream,
     _RequestReservation,
@@ -22,6 +23,7 @@ from xpyd.completion_handler import (
     tokenize_zmq_prompt,
     validate_completion_request,
 )
+from xpyd.config import ZmqConfig, ZmqReceiverConfig
 from xpyd.metrics import REGISTRY
 from xpyd.scheduler import RoundRobinSchedulingPolicy, Scheduler, SchedulingContext
 
@@ -40,15 +42,32 @@ def reservations(request_len=5):
 
 
 @pytest.fixture
-def server():
-    """Create a mock server with minimal attributes."""
-    srv = MagicMock()
-    srv.get_total_token_length = MagicMock(
+def count_tokens():
+    return MagicMock(
         side_effect=lambda x, model="": len(x) if isinstance(x, str) else 0
     )
-    srv.get_tokenizer = MagicMock(side_effect=lambda model="": srv.tokenizer)
-    srv._is_aggregated_model = MagicMock(return_value=False)
-    return srv
+
+
+@pytest.fixture
+def tokenizer():
+    return MagicMock()
+
+
+@pytest.fixture
+def dependencies(count_tokens, tokenizer):
+    return {
+        "options": CompletionOptions(),
+        "reserve": MagicMock(return_value=None),
+        "count_tokens": count_tokens,
+        "get_tokenizer": MagicMock(return_value=tokenizer),
+        "tokenize_on_backend": AsyncMock(return_value=[1, 2, 3]),
+        "forward_request": MagicMock(),
+        "is_aggregated_model": MagicMock(return_value=False),
+        "get_registered_models": MagicMock(return_value=["model"]),
+        "record_success": MagicMock(),
+        "record_failure": MagicMock(),
+        "notifications": AsyncMock(),
+    }
 
 
 class TestValidateCompletionRequest:
@@ -83,29 +102,33 @@ class TestValidateCompletionRequest:
 class TestExtractPromptInfo:
     """Tests for extract_prompt_info."""
 
-    def test_completion_string_prompt(self, server):
+    def test_completion_string_prompt(self, count_tokens):
         total_length, max_tokens, prompt_text = extract_prompt_info(
-            {"prompt": "hello world", "max_tokens": 50}, is_chat=False, server=server
+            {"prompt": "hello world", "max_tokens": 50},
+            is_chat=False,
+            count_tokens=count_tokens,
         )
         assert total_length == 11  # len("hello world")
         assert max_tokens == 50
         assert prompt_text == "hello world"
 
-    def test_completion_list_prompt(self, server):
+    def test_completion_list_prompt(self, count_tokens):
         total_length, max_tokens, prompt_text = extract_prompt_info(
-            {"prompt": [1, 2, 3], "max_tokens": 10}, is_chat=False, server=server
+            {"prompt": [1, 2, 3], "max_tokens": 10},
+            is_chat=False,
+            count_tokens=count_tokens,
         )
         assert total_length == 0  # MagicMock returns 0 for non-str
         assert max_tokens == 10
         assert prompt_text == "[1, 2, 3]"
 
-    def test_completion_default_max_tokens(self, server):
+    def test_completion_default_max_tokens(self, count_tokens):
         _, max_tokens, _ = extract_prompt_info(
-            {"prompt": "test"}, is_chat=False, server=server
+            {"prompt": "test"}, is_chat=False, count_tokens=count_tokens
         )
         assert max_tokens == 0
 
-    def test_chat_basic(self, server):
+    def test_chat_basic(self, count_tokens):
         total_length, max_tokens, prompt_text = extract_prompt_info(
             {
                 "messages": [
@@ -115,14 +138,14 @@ class TestExtractPromptInfo:
                 "max_tokens": 100,
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert total_length == len("You are helpful") + len("Hello")
         assert max_tokens == 100
         assert "You are helpful" in prompt_text
         assert "Hello" in prompt_text
 
-    def test_chat_max_completion_tokens_priority(self, server):
+    def test_chat_max_completion_tokens_priority(self, count_tokens):
         _, max_tokens, _ = extract_prompt_info(
             {
                 "messages": [{"role": "user", "content": "hi"}],
@@ -130,22 +153,22 @@ class TestExtractPromptInfo:
                 "max_tokens": 100,
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert max_tokens == 200
 
-    def test_chat_fallback_to_max_tokens(self, server):
+    def test_chat_fallback_to_max_tokens(self, count_tokens):
         _, max_tokens, _ = extract_prompt_info(
             {
                 "messages": [{"role": "user", "content": "hi"}],
                 "max_tokens": 100,
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert max_tokens == 100
 
-    def test_chat_mixed_content_types(self, server):
+    def test_chat_mixed_content_types(self, count_tokens):
         """Non-string content should be excluded from prompt_text."""
         _, _, prompt_text = extract_prompt_info(
             {
@@ -156,13 +179,13 @@ class TestExtractPromptInfo:
                 ],
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert "hello" in prompt_text
         assert "world" in prompt_text
         assert "None" not in prompt_text
 
-    def test_chat_null_content_zero_length(self, server):
+    def test_chat_null_content_zero_length(self, count_tokens):
         """Messages with None content should contribute 0 to total_length."""
         total_length, _, _ = extract_prompt_info(
             {
@@ -172,11 +195,11 @@ class TestExtractPromptInfo:
                 ],
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert total_length == 2  # len("hi") via mock
 
-    def test_chat_multimodal_content_array(self, server):
+    def test_chat_multimodal_content_array(self, count_tokens):
         """Multimodal content (list of parts) should extract text parts only."""
         total_length, _, prompt_text = extract_prompt_info(
             {
@@ -194,14 +217,14 @@ class TestExtractPromptInfo:
                 ],
             },
             is_chat=True,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert total_length == len("What is this?")
         assert "What is this?" in prompt_text
 
-    def test_completion_token_ids(self, server):
+    def test_completion_token_ids(self, count_tokens):
         """Flat list of ints (already tokenized) should return its length."""
-        server.get_total_token_length = MagicMock(
+        count_tokens = MagicMock(
             side_effect=lambda x, model="": (
                 len(x) if isinstance(x, (str, list)) else 0
             )
@@ -209,7 +232,7 @@ class TestExtractPromptInfo:
         total_length, _, _ = extract_prompt_info(
             {"prompt": [101, 102, 103]},
             is_chat=False,
-            server=server,
+            count_tokens=count_tokens,
         )
         assert total_length == 3
 
@@ -343,8 +366,8 @@ class TestBuildZmqPrepareRequest:
 
 
 class TestZmqChatHelpers:
-    def test_chat_template_tokenization(self, server):
-        server.tokenizer.apply_chat_template.return_value = {
+    def test_chat_template_tokenization(self, tokenizer):
+        tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 2, 3],
             "attention_mask": [1, 1, 1],
         }
@@ -355,8 +378,8 @@ class TestZmqChatHelpers:
             "tools": [{"type": "function"}],
         }
 
-        assert tokenize_zmq_prompt(request, True, server) == [1, 2, 3]
-        server.tokenizer.apply_chat_template.assert_called_once_with(
+        assert tokenize_zmq_prompt(request, True, tokenizer) == [1, 2, 3]
+        tokenizer.apply_chat_template.assert_called_once_with(
             request["messages"],
             foo="bar",
             tokenize=True,
@@ -365,31 +388,31 @@ class TestZmqChatHelpers:
             tools=request["tools"],
         )
 
-    def test_continue_final_message_disables_generation_prompt(self, server):
-        server.tokenizer.apply_chat_template.return_value = [1, 2, 3]
+    def test_continue_final_message_disables_generation_prompt(self, tokenizer):
+        tokenizer.apply_chat_template.return_value = [1, 2, 3]
         request = {
             "messages": [{"role": "assistant", "content": "partial"}],
             "continue_final_message": True,
         }
 
-        tokenize_zmq_prompt(request, True, server)
+        tokenize_zmq_prompt(request, True, tokenizer)
 
-        server.tokenizer.apply_chat_template.assert_called_once_with(
+        tokenizer.apply_chat_template.assert_called_once_with(
             request["messages"],
             tokenize=True,
             add_generation_prompt=False,
             continue_final_message=True,
         )
 
-    def test_chat_template_single_batch_is_unwrapped(self, server):
-        server.tokenizer.apply_chat_template.return_value = {
+    def test_chat_template_single_batch_is_unwrapped(self, tokenizer):
+        tokenizer.apply_chat_template.return_value = {
             "input_ids": [[1, 2, 3]],
         }
 
         result = tokenize_zmq_prompt(
             {"messages": [{"role": "user", "content": "hi"}]},
             True,
-            server,
+            tokenizer,
         )
 
         assert result == [1, 2, 3]
@@ -542,7 +565,7 @@ class TestHandleCompletion:
     """Integration-level tests for handle_completion."""
 
     @pytest.mark.asyncio
-    async def test_invalid_json(self, server):
+    async def test_invalid_json(self, dependencies):
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(side_effect=ValueError("bad json"))
 
@@ -551,7 +574,7 @@ class TestHandleCompletion:
             patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
-                "/v1/completions", raw_request, server, is_chat=False
+                raw_request, endpoint="/v1/completions", is_chat=False, **dependencies
             )
 
         assert isinstance(result, JSONResponse)
@@ -559,36 +582,42 @@ class TestHandleCompletion:
         track_end.assert_called_once_with("/v1/completions", 0)
 
     @pytest.mark.asyncio
-    async def test_second_selection_failure_releases_prefill(self, server):
+    async def test_second_selection_failure_releases_prefill(self, dependencies):
         request = MagicMock(headers={}, client=None)
         request.json = AsyncMock(return_value={"prompt": "hello"})
         leases = reservations()
         leases[1].release()
-        server.reserve.side_effect = [leases[0], RuntimeError("selection failed")]
-        result = await handle_completion("/v1/completions", request, server, False)
+        dependencies["reserve"].side_effect = [
+            leases[0],
+            RuntimeError("selection failed"),
+        ]
+        result = await handle_completion(
+            request, endpoint="/v1/completions", is_chat=False, **dependencies
+        )
         assert result.status_code == 500
         assert leases[0]._released
 
     @pytest.mark.asyncio
-    async def test_prefill_cancellation_releases_both_nodes(self, server):
+    async def test_prefill_cancellation_releases_both_nodes(self, dependencies):
         request = MagicMock(headers={}, client=None)
         request.json = AsyncMock(return_value={"model": "model", "prompt": "hello"})
         leases = reservations()
-        server.reserve.side_effect = leases
-        server.disaggregated_mode = "direct"
+        dependencies["reserve"].side_effect = leases
 
         async def forward(*args, **kwargs):
             raise asyncio.CancelledError()
             yield b""  # pragma: no cover
 
-        server.forward_request = forward
+        dependencies["forward_request"] = forward
         with pytest.raises(asyncio.CancelledError):
-            await handle_completion("/v1/completions", request, server, False)
+            await handle_completion(
+                request, endpoint="/v1/completions", is_chat=False, **dependencies
+            )
         assert all(lease._released for lease in leases)
-        server.registry.record_success.assert_not_called()
+        dependencies["record_success"].assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_missing_required_field(self, server):
+    async def test_missing_required_field(self, dependencies):
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(return_value={})
 
@@ -597,7 +626,7 @@ class TestHandleCompletion:
             patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
-                "/v1/completions", raw_request, server, is_chat=False
+                raw_request, endpoint="/v1/completions", is_chat=False, **dependencies
             )
 
         assert isinstance(result, JSONResponse)
@@ -605,13 +634,13 @@ class TestHandleCompletion:
         track_end.assert_called_once_with("/v1/completions", 0)
 
     @pytest.mark.asyncio
-    async def test_no_available_instance(self, server):
+    async def test_no_available_instance(self, dependencies):
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(return_value={"prompt": "hello"})
         raw_request.headers = {}
         raw_request.client = None
 
-        server.reserve = MagicMock(return_value=None)
+        dependencies["reserve"] = MagicMock(return_value=None)
         labels = {
             "instance": "unknown",
             "error_type": "no_available_instance",
@@ -625,7 +654,7 @@ class TestHandleCompletion:
             patch("xpyd.completion_handler.logger"),
         ):
             result = await handle_completion(
-                "/v1/completions", raw_request, server, is_chat=False
+                raw_request, endpoint="/v1/completions", is_chat=False, **dependencies
             )
 
         assert isinstance(result, JSONResponse)
@@ -636,7 +665,7 @@ class TestHandleCompletion:
             == before + 1
         )
 
-    def test_request_reservation_releases_each_node_once(self, server):
+    def test_request_reservation_releases_each_node_once(self, dependencies):
         leases = reservations(10)
         reservation = _RequestReservation(*leases)
 
@@ -647,7 +676,7 @@ class TestHandleCompletion:
         assert all(value == 0 for value in leases[0]._runtime._active.values())
 
     @pytest.mark.asyncio
-    async def test_nixl_prefill_parse_error_releases_reservations(self, server):
+    async def test_nixl_prefill_parse_error_releases_reservations(self, dependencies):
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(
             return_value={
@@ -658,26 +687,25 @@ class TestHandleCompletion:
         )
         raw_request.headers = {}
         raw_request.client = None
-        server.disaggregated_mode = "nixl"
+        dependencies["options"] = CompletionOptions(disaggregated_mode="nixl")
         leases = reservations()
-        server.reserve = MagicMock(side_effect=leases)
-        server._record_failure = MagicMock()
+        dependencies["reserve"] = MagicMock(side_effect=leases)
 
         async def forward(*_args, **_kwargs):
             yield b"not-json"
 
-        server.forward_request = forward
+        dependencies["forward_request"] = forward
 
         with pytest.raises(HTTPException, match="valid JSON"):
             await handle_completion(
-                "/v1/completions", raw_request, server, is_chat=False
+                raw_request, endpoint="/v1/completions", is_chat=False, **dependencies
             )
 
         assert all(lease._released for lease in leases)
-        server.registry.record_success.assert_not_called()
+        dependencies["record_success"].assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unknown_aggregated_model_ends_metrics(self, server):
+    async def test_unknown_aggregated_model_ends_metrics(self, dependencies):
         raw_request = AsyncMock()
         raw_request.json = AsyncMock(
             return_value={
@@ -689,16 +717,16 @@ class TestHandleCompletion:
         raw_request.headers = {}
         raw_request.client = None
 
-        server._is_aggregated_model.return_value = True
-        server.reserve.return_value = None
-        server.registry.get_registered_models.return_value = ["known-model"]
+        dependencies["is_aggregated_model"].return_value = True
+        dependencies["reserve"].return_value = None
+        dependencies["get_registered_models"].return_value = ["known-model"]
 
         with (
             patch("xpyd.completion_handler.track_request_start", return_value=0),
             patch("xpyd.completion_handler.track_request_end") as track_end,
         ):
             result = await handle_completion(
-                "/v1/completions", raw_request, server, is_chat=False
+                raw_request, endpoint="/v1/completions", is_chat=False, **dependencies
             )
 
         assert isinstance(result, JSONResponse)
@@ -709,9 +737,9 @@ class TestHandleCompletion:
     @pytest.mark.parametrize("source", ["decode", "prefill"])
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("max_tokens", [1, 2])
-    async def test_zmq_chat_completion_modes(self, server, source, stream, max_tokens):
-        from xpyd.proxy import D_first_token_generator
-
+    async def test_zmq_chat_completion_modes(
+        self, dependencies, tokenizer, source, stream, max_tokens
+    ):
         request = {
             "model": "model",
             "messages": [{"role": "user", "content": "hi"}],
@@ -723,24 +751,25 @@ class TestHandleCompletion:
         raw_request.headers = {}
         raw_request.client = None
 
-        receiver = MagicMock(host="receiver")
-        receiver.init_ports = [7300]
-        receiver.alloc_ports = [7400]
-        server.disaggregated_mode = "zmq"
-        server.first_token_source = source
-        server.tokenizer.apply_chat_template.return_value = {
+        receiver = ZmqReceiverConfig(
+            host="receiver", init_ports=[7300], alloc_ports=[7400]
+        )
+        dependencies["options"] = CompletionOptions(
+            disaggregated_mode="zmq",
+            first_token_source=source,
+            zmq=ZmqConfig(receivers={"decode:8000": receiver}),
+        )
+        tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 2, 3],
             "attention_mask": [1, 1, 1],
         }
         leases = reservations(3)
-        server.reserve = MagicMock(side_effect=leases)
-        server.zmq_config.receivers = {"decode:8000": receiver}
-        server.zmq_notifications.register = AsyncMock()
-        server.zmq_notifications.wait = AsyncMock()
-        server._record_failure = MagicMock()
-        server.registry = None
-        server.generator = D_first_token_generator
-        server.d_first_token_generator_class = D_first_token_generator
+        dependencies["reserve"] = MagicMock(side_effect=leases)
+        dependencies["notifications"].register = AsyncMock()
+        dependencies["notifications"].wait = AsyncMock()
+        dependencies["get_registered_models"] = None
+        dependencies["record_success"] = None
+        dependencies["record_failure"] = None
         forwarded = []
 
         async def forward(url, data, **kwargs):
@@ -793,14 +822,17 @@ class TestHandleCompletion:
                     }
                 ).encode()
 
-        server.forward_request = forward
+        dependencies["forward_request"] = forward
         with (
             patch("xpyd.completion_handler.track_request_start", return_value=0),
             patch("xpyd.completion_handler.track_request_end"),
             patch("xpyd.completion_handler.record_disaggregated_metrics"),
         ):
             response = await handle_completion(
-                "/v1/chat/completions", raw_request, server, is_chat=True
+                raw_request,
+                endpoint="/v1/chat/completions",
+                is_chat=True,
+                **dependencies,
             )
             body = b"".join([chunk async for chunk in response.body_iterator])
 
@@ -810,7 +842,7 @@ class TestHandleCompletion:
             else []
         )
         assert [call[0] for call in forwarded] == expected_urls
-        assert server.reserve.call_count == 2
+        assert dependencies["reserve"].call_count == 2
         assert all(lease._released for lease in leases)
         assert "messages" not in forwarded[0][1]
         assert forwarded[0][1]["prompt"] == [1, 2, 3]

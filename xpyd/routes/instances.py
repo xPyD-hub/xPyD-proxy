@@ -4,20 +4,22 @@
 import ipaddress
 import logging
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from xpyd.errors import INVALID_REQUEST, SERVER_ERROR, error_response
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
-
 logger = logging.getLogger("xpyd.proxy")
 
 
-def register(router: APIRouter, server: "Proxy") -> None:
+def register(
+    router: APIRouter,
+    *,
+    add_instance: Callable[[str, str], Awaitable[bool]],
+    remove_instance: Callable[[str, str, float], Awaitable[None]],
+) -> None:
     """Register instance administration routes on *router*."""
 
     def _authenticate_api_key(x_api_key: str):
@@ -62,7 +64,7 @@ def register(router: APIRouter, server: "Proxy") -> None:
             except Exception:
                 return error_response("Invalid instance address", INVALID_REQUEST, 400)
 
-            is_valid = await server.add_instance(instance_type, instance)
+            is_valid = await add_instance(instance_type, instance)
             if not is_valid:
                 return error_response(
                     "Instance validation failed", INVALID_REQUEST, 400
@@ -105,7 +107,7 @@ def register(router: APIRouter, server: "Proxy") -> None:
                     400,
                 )
 
-            await server.drain_and_remove_instance(
+            await remove_instance(
                 instance_type,
                 instance,
                 float(timeout_seconds),

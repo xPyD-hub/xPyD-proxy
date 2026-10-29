@@ -1,31 +1,38 @@
 # SPDX-License-Identifier: Apache-2.0
 """Cluster and per-instance status endpoints."""
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
+from xpyd.registry import InstanceInfo
 
 
-def register(router: APIRouter, server: "Proxy") -> None:
+def register(
+    router: APIRouter,
+    *,
+    prefill_instances: list[str],
+    decode_instances: list[str],
+    get_instances: Callable[[], list[InstanceInfo]] | None = None,
+) -> None:
     async def get_status():
         return {
-            "prefill_node_count": len(server.prefill_instances),
-            "decode_node_count": len(server.decode_instances),
-            "prefill_nodes": server.prefill_instances,
-            "decode_nodes": server.decode_instances,
+            "prefill_node_count": len(prefill_instances),
+            "decode_node_count": len(decode_instances),
+            "prefill_nodes": prefill_instances,
+            "decode_nodes": decode_instances,
         }
 
     async def _instance_status():
+        if get_instances is None:
+            raise RuntimeError("Instance registry is unavailable.")
         result: dict[str, list] = {
             "prefill_instances": [],
             "decode_instances": [],
             "aggregated_instances": [],
         }
-        for info in server.registry.get_all_instances():
+        for info in get_instances():
             result[f"{info.role}_instances"].append(
                 {
                     "address": info.address,

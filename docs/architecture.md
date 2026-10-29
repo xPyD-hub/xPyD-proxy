@@ -55,10 +55,15 @@ The existing `xpyd.proxy:main` CLI entry point remains supported.
   configuration-only commands. `load_config()` returns a `ProxyConfig` when a
   server should start, or `None` when a configuration command completes without
   starting one. It does not import or construct the proxy runtime.
-- `xpyd/app.py` exposes `create_app(config, proxy, health_monitor=None)`. It
-  assembles FastAPI around an existing proxy, mounts its router, and owns CORS,
-  readiness checks, and the discovery/health-monitor/ZMQ-listener lifecycle.
-  Constructing the app does not start a network listener or background services.
+- `xpyd/app.py` exposes
+  `create_app(router, *, discovery, health_monitor=None, zmq_notifications=None)`.
+  It mounts the supplied router and owns CORS, readiness checks, and the
+  background-service lifecycle. It does not receive a `Proxy`, create runtime
+  dependencies, or write state back to a coordinator.
+- `ProxyServer` constructs discovery, the optional health monitor and ZMQ
+  listener, and shares the same listener with completion execution and app
+  lifecycle management. `ProxyServer.create_app()` wires the application without
+  starting a network listener or background services.
 
 Backends may be offline at startup. Discovery starts in the background, inference
 returns 503 until ready, and health/status/metrics/admin endpoints remain
@@ -66,18 +71,31 @@ accessible.
 
 ### Endpoint Modules (`xpyd/routes/`)
 
-Each logical endpoint has a module with `register(router, server)`.
+Each logical endpoint has a module with `register(router, *, ...)`, taking only
+the callbacks or data that endpoint needs.
 `routes/__init__.py` registers them all. URL aliases share their logical module:
 `score.py` handles `/score` and `/v1/score`, `rerank.py` handles all three rerank
 paths, and `health.py` handles `/health` and `/ping`. `status.py` serves both
 `/status` and `/status/instances`; `instances.py` handles addition and removal.
 Existing OPTIONS handlers stay beside their endpoints.
 
-`completions.py` and `chat_completions.py` are separate HTTP entry points. Both
-delegate to `xpyd/completion_handler.py`, which contains shared validation,
-request preparation, aggregated/P-D execution, response conversion, first-token
-generators, metrics, and reservation cleanup. Passthrough endpoints reuse
-`Proxy.post_to_instance()`.
+`completions.py` and `chat_completions.py` are separate HTTP entry points. Each
+receives an async `execute(request)` callback and an optional custom handler.
+Passthrough endpoints receive a `forward(request, path, template)` callback;
+health/version endpoints receive a fetch callback. Model/status endpoints use
+query callbacks and the relevant live membership lists. Instance administration
+receives only add/remove callbacks; metrics needs no injected runtime object.
+
+`xpyd/completion_handler.py` takes explicit keyword-only operations for scheduling,
+forwarding, tokenization, topology lookup, model lookup and outcome recording,
+plus `CompletionOptions` and an optional notification interface. Options contain
+only transfer configuration, not service objects. The aggregated sub-handler
+receives only scheduling, forwarding, model lookup and outcome callbacks; pure
+prompt helpers receive only a token-counting function or tokenizer.
+
+`xpyd/interfaces.py` defines narrow callable/tokenizer/notification contracts.
+There is no `ProxyProtocol`, generic service container, or all-purpose context
+passed through request handling.
 
 Runtime imports are one-way:
 
@@ -86,13 +104,20 @@ proxy -> cli -> config
 proxy -> app -> discovery / health_monitor
 proxy -> routes -> completion_handler
 proxy -> completion_handler
+routes / completion_handler -> interfaces
 ```
 
-App assembly, routes, and completion helpers receive the proxy object rather
-than importing its implementation at runtime. References to `Proxy` for type
-annotations are guarded by `TYPE_CHECKING`. Completion helpers do not import
-routes or app assembly. Resource ownership during streaming is unchanged:
-request completion and reservation release remain tied to response consumption.
+Only the composition code in `proxy.py` selects concrete implementations and
+binds endpoint-specific completion callbacks. It currently supplies bound
+runtime methods, but the receiving modules depend only on the declared callable
+contracts: independent functions or alternative services can be supplied instead.
+Routes, app assembly, and completion helpers neither receive a `Proxy`/server
+object nor import that implementation, including for type annotations.
+
+Completion helpers do not import routes or app assembly. Resource ownership
+during streaming is unchanged: request completion and reservation release remain
+tied to response consumption. Membership lists remain live so runtime
+addition/removal is reflected in status responses.
 
 ### Scheduling Policies
 
