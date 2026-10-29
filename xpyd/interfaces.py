@@ -15,9 +15,8 @@ TokenizeOnBackend = Callable[[dict[str, Any], bool], Awaitable[list[int]]]
 
 
 class GetFromInstance(Protocol):
-    async def __call__(
-        self, path: str, is_full_instancelist: int = 0
-    ) -> JSONResponse: ...
+    async def __call__(self, path: str, is_full_instancelist: int = 0) -> JSONResponse:
+        pass
 
 
 class ForwardRequest(Protocol):
@@ -27,18 +26,24 @@ class ForwardRequest(Protocol):
         data: dict[str, Any],
         *,
         extra_headers: dict[str, str] | None = None,
-    ) -> AsyncIterator[bytes]: ...
+    ) -> AsyncIterator[bytes]:
+        pass
 
 
 class Tokenizer(Protocol):
-    def encode(self, text: str) -> list[int]: ...
+    def encode(self, text: str) -> list[int]:
+        pass
 
-    def apply_chat_template(self, messages: list[dict], **kwargs: Any) -> Any: ...
+    def apply_chat_template(self, messages: list[dict], **kwargs: Any) -> Any:
+        pass
 
 
 class Notifications(Protocol):
-    async def register(self, request_id: str) -> None: ...
+    async def register(self, request_id: str) -> None:
+        pass
 
-    async def wait(self, request_id: str, expected: int) -> None: ...
+    async def wait(self, request_id: str, expected: int) -> None:
+        pass
 
-    async def discard(self, request_id: str) -> None: ...
+    async def discard(self, request_id: str) -> None:
+        pass
