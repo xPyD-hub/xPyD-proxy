@@ -137,6 +137,12 @@ reservations. Policy-specific token/KV accounting stays inside each subclass.
 Aggregated and P/D request paths share this boundary; see
 [Scheduling Policies](scheduling.md#common-policy-contract).
 
+Policies do not hold or import the instance registry. Capacity-aware policies
+declare their data requirement; the proxy composition layer queries node model
+lengths and injects a mapping into their factory. Strategy constructors perform
+no backend I/O. Runtime filtering remains the only scheduling-layer consumer
+of registry health and active-request state.
+
 ## Request Flow
 
 ```

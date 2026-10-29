@@ -26,13 +26,67 @@ STRATEGIES = [
 ROLES = ["aggregated", "prefill", "decode"]
 
 
-@pytest.fixture
-def model_lengths():
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_policies_do_not_accept_instance_registry(strategy):
+    with pytest.raises(TypeError, match="registry"):
+        default_registry.build(strategy, registry=InstanceRegistry())
+
+
+@pytest.mark.parametrize(
+    "strategy", ["loadbalanced", "load_balanced", "custom_capacity"]
+)
+def test_composition_queries_and_injects_capacities(strategy, monkeypatch):
+    from xpyd.proxy import _create_scheduling_policy
+    from xpyd.scheduler import LoadBalancedScheduler
+
+    class CustomCapacityPolicy(LoadBalancedScheduler):
+        pass
+
+    monkeypatch.setitem(
+        default_registry._policies, "custom_capacity", CustomCapacityPolicy
+    )
+    config = ProxyConfig(
+        model="demo",
+        prefill=["127.0.0.1:18101"],
+        decode=["127.0.0.1:18102"],
+        scheduling=strategy,
+    )
     with patch(
-        "xpyd.scheduler.load_balanced.query_instance_model_len",
-        side_effect=lambda nodes: [4096] * len(nodes),
-    ):
-        yield
+        "xpyd.proxy.query_instance_model_len", return_value=[1024, 8192]
+    ) as query:
+        policy = _create_scheduling_policy(config)
+    query.assert_called_once_with(config.prefill + config.decode)
+    assert policy.prefill_model_len == [1024]
+    assert policy.decode_model_len == [8192]
+
+
+@pytest.mark.parametrize(
+    "strategy,has_pd_nodes",
+    [
+        ("roundrobin", True),
+        ("consistent_hash", True),
+        ("power_of_two", True),
+        ("cache_aware", True),
+        ("loadbalanced", False),
+    ],
+)
+def test_composition_skips_unneeded_capacity_queries(strategy, has_pd_nodes):
+    from xpyd.proxy import _create_scheduling_policy
+
+    config = ProxyConfig(
+        model="demo",
+        prefill=["127.0.0.1:18101"] if has_pd_nodes else [],
+        decode=["127.0.0.1:18102"] if has_pd_nodes else [],
+        instances=(
+            None
+            if has_pd_nodes
+            else [{"role": "aggregated", "address": "127.0.0.1:18103"}]
+        ),
+        scheduling=strategy,
+    )
+    with patch("xpyd.proxy.query_instance_model_len") as query:
+        _create_scheduling_policy(config)
+    query.assert_not_called()
 
 
 def make_proxy(strategy, role):
@@ -48,7 +102,7 @@ def make_proxy(strategy, role):
         prefill_instances=prefill,
         decode_instances=decode,
         workers=nodes,
-        registry=registry,
+        model_lengths={address: 4096 for address in nodes},
     )
     return (
         Proxy(
@@ -65,7 +119,7 @@ def make_proxy(strategy, role):
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.parametrize("role", ROLES)
-def test_filtering_and_idempotent_release(model_lengths, strategy, role):
+def test_filtering_and_idempotent_release(strategy, role):
     proxy, nodes = make_proxy(strategy, role)
     context = SchedulingContext(
         role=role, model="demo", request_len=5, max_tokens=1, prompt="prefix"
@@ -84,7 +138,7 @@ def test_filtering_and_idempotent_release(model_lengths, strategy, role):
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.parametrize("role", ROLES)
 @pytest.mark.asyncio
-async def test_membership_changes_through_proxy(model_lengths, strategy, role):
+async def test_membership_changes_through_proxy(strategy, role):
     proxy, nodes = make_proxy(strategy, role)
     context = SchedulingContext(role=role, model="demo", request_len=5, prompt="prefix")
     # Create any lazily configured per-model policy before changing membership.
@@ -104,7 +158,7 @@ async def test_membership_changes_through_proxy(model_lengths, strategy, role):
 
 @pytest.mark.parametrize("strategy", ["loadbalanced", "power_of_two"])
 @pytest.mark.parametrize("role", ROLES)
-def test_concurrent_reservations_preserve_load(model_lengths, strategy, role):
+def test_concurrent_reservations_preserve_load(strategy, role):
     proxy, nodes = make_proxy(strategy, role)
     # Initialize per-model policy before calling from multiple worker threads.
     proxy.reserve(SchedulingContext(role=role, model="demo", request_len=5)).release()
@@ -116,7 +170,7 @@ def test_concurrent_reservations_preserve_load(model_lengths, strategy, role):
     assert [proxy.registry.get_active_requests(node) for node in nodes] == [0, 0]
 
 
-def test_release_uses_original_policy_after_fallback_changes(model_lengths):
+def test_release_uses_original_policy_after_fallback_changes():
     proxy, nodes = make_proxy("loadbalanced", "prefill")
     lease = proxy.reserve(
         SchedulingContext(role="prefill", model="demo", request_len=30)
@@ -141,8 +195,8 @@ def test_invalid_selection_is_rejected_without_accounting():
 @pytest.mark.parametrize("role", ROLES)
 def test_custom_policy_from_yaml_needs_no_proxy_branch(tmp_path, monkeypatch, role):
     class LastPolicy(SchedulingPolicy):
-        def __init__(self, workers=(), registry=None, offset=0):
-            super().__init__(registry)
+        def __init__(self, workers=(), offset=0):
+            super().__init__()
             self.offset = offset
             self.finished = []
 
@@ -202,7 +256,7 @@ def test_configuration_selects_policy_through_common_factory():
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
-def test_only_unified_policy_entry_points_are_exposed(model_lengths, strategy):
+def test_only_unified_policy_entry_points_are_exposed(strategy):
     policy = default_registry.build(strategy)
     for name in (
         "schedule",
@@ -267,7 +321,7 @@ def test_unknown_policy_option_is_not_silently_ignored(strategy):
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
-async def test_failed_membership_update_rolls_back(model_lengths, strategy):
+async def test_failed_membership_update_rolls_back(strategy):
     from unittest.mock import Mock
 
     proxy, nodes = make_proxy(strategy, "decode")

@@ -11,11 +11,44 @@ from xpyd.scheduler import LoadBalancedScheduler, Scheduler, SchedulingContext
 
 @pytest.fixture
 def policy():
+    return LoadBalancedScheduler(
+        ["p1", "p2"],
+        ["d1", "d2"],
+        model_lengths={address: 4096 for address in ("p1", "p2", "d1", "d2")},
+    )
+
+
+@pytest.mark.parametrize("role", ["prefill", "decode"])
+def test_injected_capacities_are_matched_by_address_without_backend_io(role):
+    capacities = {"large": 8192, "small": 1024}
+    nodes = ["small", "large"]
     with patch(
-        "xpyd.scheduler.load_balanced.query_instance_model_len",
-        side_effect=lambda nodes: [4096] * len(nodes),
-    ):
-        return LoadBalancedScheduler(["p1", "p2"], ["d1", "d2"])
+        "requests.get", side_effect=AssertionError("Policy performed HTTP I/O")
+    ) as query:
+        policy = LoadBalancedScheduler(
+            nodes if role == "prefill" else [],
+            nodes if role == "decode" else [],
+            model_lengths=capacities,
+        )
+        capacities["small"] = 8192
+        lease = Scheduler().reserve(
+            policy,
+            SchedulingContext(role=role, request_len=1024, max_tokens=1),
+            nodes,
+        )
+    query.assert_not_called()
+    assert lease.address == "large"
+    lease.release()
+
+
+@pytest.mark.parametrize("role", ["prefill", "decode"])
+def test_missing_capacity_is_rejected(role):
+    with pytest.raises(ValueError, match="Missing model lengths.*missing"):
+        LoadBalancedScheduler(
+            ["missing"] if role == "prefill" else [],
+            ["missing"] if role == "decode" else [],
+            model_lengths={},
+        )
 
 
 @pytest.mark.parametrize("role", ["prefill", "decode"])

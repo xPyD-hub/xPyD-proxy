@@ -260,7 +260,7 @@ class TestCacheAwarePolicy:
         registry.add("decode", "w1")
         registry.mark_healthy("w1")
         registry.begin_draining("decode", "w1")
-        policy = CacheAwarePolicy(workers=["w1"], registry=registry)
+        policy = CacheAwarePolicy(workers=["w1"])
 
         selected = Scheduler(registry).reserve(
             policy,

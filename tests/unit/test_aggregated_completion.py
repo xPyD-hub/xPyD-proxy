@@ -25,7 +25,7 @@ def make_proxy(strategy="roundrobin", override=None, registry=True):
         [],
         [],
         MODEL,
-        default_registry.build(strategy, registry=reg),
+        default_registry.build(strategy),
         registry=reg,
         aggregated_instances={MODEL: list(NODES)},
         model_schedulers={MODEL: override} if override else {},

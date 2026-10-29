@@ -4,11 +4,7 @@
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence
-
-if TYPE_CHECKING:
-    from xpyd.registry import InstanceRegistry
-
+from typing import Any, ClassVar, Literal, Mapping, Optional, Sequence
 
 InstanceRole = Literal["prefill", "decode", "aggregated"]
 
@@ -35,21 +31,10 @@ class Candidate:
 class SchedulingPolicy(ABC):
     """Base class for all scheduling policies."""
 
-    def __init__(
-        self,
-        registry: Optional["InstanceRegistry"] = None,
-        workers: Optional[Sequence[str]] = None,
-    ):
+    requires_model_lengths: ClassVar[bool] = False
+
+    def __init__(self, workers: Optional[Sequence[str]] = None):
         self.lock = threading.Lock()
-        self._registry: Optional["InstanceRegistry"] = registry
-
-    @property
-    def registry(self) -> Optional["InstanceRegistry"]:
-        return self._registry
-
-    @registry.setter
-    def registry(self, value: Optional["InstanceRegistry"]) -> None:
-        self._registry = value
 
     @abstractmethod
     def select_node(
@@ -65,12 +50,12 @@ class SchedulingPolicy(ABC):
         prefill_instances: Sequence[str] = (),
         decode_instances: Sequence[str] = (),
         workers: Sequence[str] = (),
-        registry: Optional["InstanceRegistry"] = None,
+        model_lengths: Mapping[str, int] | None = None,
         tokenizer: Any = None,
         **options: Any,
     ) -> "SchedulingPolicy":
         """Construct a policy without requiring callers to know its constructor."""
-        return cls(workers=list(workers), registry=registry, **options)
+        return cls(workers=list(workers), **options)
 
     def on_instance_added(  # noqa: B027 - optional lifecycle hook
         self, role: InstanceRole, address: str, max_model_len: int

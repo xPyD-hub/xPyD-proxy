@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for multi-model routing support."""
 
-from unittest.mock import patch
-
 from xpyd.registry import InstanceRegistry
 from xpyd.scheduler import Scheduler, SchedulingContext
 
@@ -119,15 +117,11 @@ class TestSchedulerRoutesByModel:
         all_prefill = ["10.0.0.1:8000", "10.0.0.2:8000"]
         all_decode = ["10.0.0.1:9000", "10.0.0.2:9000"]
 
-        with patch(
-            "xpyd.scheduler.load_balanced.query_instance_model_len",
-            return_value=[131072] * 2,
-        ):
-            sched = LoadBalancedScheduler(
-                all_prefill,
-                all_decode,
-                registry=reg,
-            )
+        sched = LoadBalancedScheduler(
+            all_prefill,
+            all_decode,
+            model_lengths={address: 131072 for address in all_prefill + all_decode},
+        )
 
         runtime = Scheduler(reg)
         result = runtime.reserve(
@@ -163,15 +157,11 @@ class TestSchedulerNoInstanceForModel:
         reg.mark_healthy("10.0.0.1:8000")
         reg.mark_healthy("10.0.0.1:9000")
 
-        with patch(
-            "xpyd.scheduler.load_balanced.query_instance_model_len",
-            return_value=[131072],
-        ):
-            sched = LoadBalancedScheduler(
-                ["10.0.0.1:8000"],
-                ["10.0.0.1:9000"],
-                registry=reg,
-            )
+        sched = LoadBalancedScheduler(
+            ["10.0.0.1:8000"],
+            ["10.0.0.1:9000"],
+            model_lengths={"10.0.0.1:8000": 131072, "10.0.0.1:9000": 131072},
+        )
 
         result = Scheduler(reg).reserve(
             sched,
@@ -202,15 +192,11 @@ class TestSchedulerLoadBalanceWithinModel:
 
         all_decode = ["10.0.0.1:9001", "10.0.0.2:9002", "10.0.0.3:9003"]
 
-        with patch(
-            "xpyd.scheduler.load_balanced.query_instance_model_len",
-            return_value=[131072] * 3,
-        ):
-            sched = LoadBalancedScheduler(
-                [],
-                all_decode,
-                registry=reg,
-            )
+        sched = LoadBalancedScheduler(
+            [],
+            all_decode,
+            model_lengths={address: 131072 for address in all_decode},
+        )
 
         # All requests with model="llama-3" must only go to llama-3 instances
         runtime = Scheduler(reg)

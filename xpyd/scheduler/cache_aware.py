@@ -179,13 +179,11 @@ class CacheAwarePolicy(SchedulingPolicy):
         prefill_instances=(),
         decode_instances=(),
         workers=(),
-        registry=None,
+        model_lengths=None,
         tokenizer=None,
         **options,
     ):
-        return cls(
-            workers=list(workers), registry=registry, tokenizer=tokenizer, **options
-        )
+        return cls(workers=list(workers), tokenizer=tokenizer, **options)
 
     def select_node(
         self, context: SchedulingContext, candidates: Sequence[Candidate]

@@ -60,6 +60,12 @@ minimizes active requests, breaking busy-node ties using in-flight prompt tokens
 P/D candidates must also satisfy the model-length limit. Reservations release
 these counts when a request completes, fails, or is cancelled.
 
+The policy does not query backends. At startup the proxy composition layer
+queries P/D node capacities and passes an address-to-`max_model_len` mapping
+into the policy. Unreachable nodes retain the existing logged fallback of
+131072, so proxy-first startup remains supported. Dynamically added nodes
+receive their validated capacity through `on_instance_added()`.
+
 ### Characteristics
 
 - **Load-aware** — naturally adapts to heterogeneous instance performance.
@@ -215,6 +221,32 @@ policy and context, so changing a model's tokenizer fallback cannot release
 load against the wrong policy. Releasing a reservation does not record success
 or failure; the request executor handles outcomes separately.
 
+Only the runtime holds an `InstanceRegistry`; policies and their base class
+neither accept nor store one. `from_config()` receives topology data,
+`model_lengths`, tokenizer input and strategy options, not live registry state.
+Policies declare `requires_model_lengths = True` when they need startup
+capacities. The composition layer inspects that declaration via
+`PolicyRegistry.get_policy_class()`, queries capacities only for those policies,
+then uses the common factory. Aliases and custom subclasses follow the same
+path without a branch on a concrete policy name or type.
+
+For direct Python construction, capacity-aware P/D policies require supplied
+capacities; missing entries are errors rather than implicit network queries:
+
+```python
+from xpyd.scheduler import LoadBalancedScheduler
+
+policy = LoadBalancedScheduler(
+    ["prefill:8100"],
+    ["decode:8200"],
+    model_lengths={"prefill:8100": 8192, "decode:8200": 16384},
+)
+```
+
+The mapping is read by address, not by iteration order. Node membership lists
+retain their shared lifecycle semantics; capacity values are copied into policy
+state. Aggregated-only load balancing needs no P/D capacity data.
+
 The proxy uses this same contract for aggregated and P/D requests. It does not
 branch on concrete strategy types. Request code calls `Proxy.reserve(context)`
 and retains the returned reservation until it can call `release()`.
@@ -232,7 +264,8 @@ power-of-two counters.
 
 Implement `SchedulingPolicy.select_node()` and any required lifecycle hooks.
 Override `from_config()` if the constructor needs special arguments; otherwise
-the default factory accepts `workers`, `registry`, and the configured options.
+the default factory passes `workers` and the configured options to the constructor.
+Override it to consume additional common inputs such as `model_lengths`.
 Register the class before loading YAML:
 
 ```python

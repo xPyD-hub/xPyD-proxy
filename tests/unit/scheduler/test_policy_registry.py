@@ -10,8 +10,8 @@ from xpyd.scheduler.scheduler_base import SchedulingPolicy
 class _DummyPolicy(SchedulingPolicy):
     """Minimal concrete policy for testing."""
 
-    def __init__(self, workers=None, registry=None, **kwargs):
-        super().__init__(registry=registry, workers=workers)
+    def __init__(self, workers=None, **kwargs):
+        super().__init__(workers=workers)
         self.kwargs = kwargs
 
     def select_node(self, context, candidates):
@@ -78,18 +78,13 @@ class TestPolicyRegistry:
 
     def test_build_returns_correct_type(self):
         """build() returns an instance of the registered class."""
-        from unittest.mock import patch
-
         rr = default_registry.build("roundrobin")
         assert isinstance(rr, SchedulingPolicy)
 
-        with patch(
-            "xpyd.scheduler.load_balanced.query_instance_model_len",
-            return_value=[131072],
-        ):
-            lb = default_registry.build(
-                "loadbalanced",
-                prefill_instances=["p1"],
-                decode_instances=["d1"],
-            )
+        lb = default_registry.build(
+            "loadbalanced",
+            prefill_instances=["p1"],
+            decode_instances=["d1"],
+            model_lengths={"p1": 131072, "d1": 131072},
+        )
         assert isinstance(lb, SchedulingPolicy)

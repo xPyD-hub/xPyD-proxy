@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Policy selection and runtime eligibility are separate contracts."""
 
-from unittest.mock import patch
-
 import pytest
 
 from xpyd.registry import InstanceRegistry
@@ -76,15 +74,12 @@ def test_runtime_filters_unhealthy(strategy, role, healthy):
         registry.add(role, node)
     for node in healthy:
         registry.mark_healthy(node)
-    with patch(
-        "xpyd.scheduler.load_balanced.query_instance_model_len",
-        side_effect=lambda instances: [4096] * len(instances),
-    ):
-        policy = default_registry.build(
-            strategy,
-            prefill_instances=nodes if role == "prefill" else [],
-            decode_instances=nodes if role == "decode" else [],
-        )
+    policy = default_registry.build(
+        strategy,
+        prefill_instances=nodes if role == "prefill" else [],
+        decode_instances=nodes if role == "decode" else [],
+        model_lengths={address: 4096 for address in nodes},
+    )
     runtime = Scheduler(registry)
     context = SchedulingContext(role=role, request_len=100, max_tokens=10)
     leases = [runtime.reserve(policy, context, nodes) for _ in range(6)]
@@ -101,15 +96,12 @@ def test_runtime_filters_unhealthy(strategy, role, healthy):
 @pytest.mark.parametrize("role", ["prefill", "decode"])
 def test_runtime_without_registry_uses_explicit_candidates(strategy, role):
     nodes = ["a", "b", "c"]
-    with patch(
-        "xpyd.scheduler.load_balanced.query_instance_model_len",
-        side_effect=lambda instances: [4096] * len(instances),
-    ):
-        policy = default_registry.build(
-            strategy,
-            prefill_instances=nodes if role == "prefill" else [],
-            decode_instances=nodes if role == "decode" else [],
-        )
+    policy = default_registry.build(
+        strategy,
+        prefill_instances=nodes if role == "prefill" else [],
+        decode_instances=nodes if role == "decode" else [],
+        model_lengths={address: 4096 for address in nodes},
+    )
     runtime = Scheduler()
     context = SchedulingContext(role=role, request_len=100, max_tokens=1)
     leases = [runtime.reserve(policy, context, nodes) for _ in nodes]
