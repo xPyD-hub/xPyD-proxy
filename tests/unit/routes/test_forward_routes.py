@@ -33,7 +33,7 @@ def register(router, server):
         rerank,
         invocations,
     ):
-        module.register(router, server)
+        module.register(router, forward=server.post_to_instance)
 
 
 # (route, forwarded path, expected json template, a valid request body)

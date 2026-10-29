@@ -16,8 +16,16 @@ from ._helpers import build_app
 
 
 def register(router, server):
-    instances.register(router, server)
-    status.register(router, server)
+    instances.register(
+        router,
+        add_instance=server.add_instance,
+        remove_instance=server.drain_and_remove_instance,
+    )
+    status.register(
+        router,
+        prefill_instances=server.prefill_instances,
+        decode_instances=server.decode_instances,
+    )
 
 
 API_KEY = "s3cr3t"

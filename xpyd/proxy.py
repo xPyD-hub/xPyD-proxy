@@ -17,21 +17,29 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
+from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import aiohttp
 import uvicorn
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from transformers import AutoTokenizer
 
 from xpyd.app import create_app
 from xpyd.cli import load_config
-from xpyd.completion_handler import D_first_token_generator, P_first_token_generator
+from xpyd.completion_handler import (
+    CompletionOptions,
+    D_first_token_generator,
+    P_first_token_generator,
+    handle_completion,
+)
 from xpyd.config import ProxyConfig
+from xpyd.discovery import NodeDiscovery
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, SERVER_ERROR, error_response
 from xpyd.health_monitor import HealthMonitor
+from xpyd.interfaces import Notifications, RequestHandler
 from xpyd.registry import InstanceRegistry
 from xpyd.routes import register_routes
 from xpyd.scheduler import (
@@ -41,6 +49,7 @@ from xpyd.scheduler import (
     SchedulingPolicy,
     default_registry,
 )
+from xpyd.zmq_notifications import ZmqNotificationListener
 
 
 class _ExtraFormatter(logging.Formatter):
@@ -89,12 +98,8 @@ class Proxy:
         decode_instances: list[str],
         model: str,
         scheduling_policy: SchedulingPolicy,
-        custom_create_completion: Optional[
-            Callable[[Request], StreamingResponse]
-        ] = None,
-        custom_create_chat_completion: Optional[
-            Callable[[Request], StreamingResponse]
-        ] = None,
+        custom_create_completion: RequestHandler | None = None,
+        custom_create_chat_completion: RequestHandler | None = None,
         first_token_source: str = "decode",
         registry: Optional[InstanceRegistry] = None,
         aggregated_instances: Optional[dict[str, list[str]]] = None,
@@ -104,6 +109,7 @@ class Proxy:
         zmq_config=None,
         scheduling_options: Optional[dict[str, Any]] = None,
         model_policy_options: Optional[dict[str, dict[str, Any]]] = None,
+        zmq_notifications: Notifications | None = None,
     ):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
@@ -121,7 +127,7 @@ class Proxy:
         self.disaggregated_mode = disaggregated_mode
         self.first_token_source = first_token_source
         self.zmq_config = zmq_config
-        self.zmq_notifications = None
+        self.zmq_notifications = zmq_notifications
         self._aggregated_policies: dict[str, SchedulingPolicy] = {}
         self._scheduling_options = scheduling_options or {}
         self._model_policy_options = model_policy_options or {}
@@ -131,8 +137,6 @@ class Proxy:
         self.health_monitor = None
         self.discovery = None
         self._instance_mutation_lock = asyncio.Lock()
-        self.router = APIRouter()
-        self.setup_routes()
         self.generator = (
             P_first_token_generator
             if first_token_source == "prefill"
@@ -140,6 +144,7 @@ class Proxy:
         )
         self.d_first_token_generator_class = D_first_token_generator
         self.tokenizer = None
+        self.setup_routes()
 
     def ensure_tokenizer(self, model: str) -> bool:
         """Load a model tokenizer or mark the model for round-robin fallback."""
@@ -271,7 +276,60 @@ class Proxy:
             return self._scheduler.reserve(policy, context, instances)
 
     def setup_routes(self) -> None:
-        register_routes(self.router, self)
+        """Bind runtime operations at the composition boundary."""
+        completion = partial(
+            handle_completion,
+            reserve=self.reserve,
+            forward_request=self.forward_request,
+            count_tokens=self.get_total_token_length,
+            get_tokenizer=self.get_tokenizer,
+            tokenize_on_backend=self.tokenize_on_backend,
+            is_aggregated_model=self._is_aggregated_model,
+            options=CompletionOptions(
+                disaggregated_mode=self.disaggregated_mode,
+                first_token_source=self.first_token_source,
+                zmq=self.zmq_config,
+            ),
+            get_registered_models=(
+                self.registry.get_registered_models
+                if self.registry is not None
+                else None
+            ),
+            record_success=(
+                self.registry.record_success if self.registry is not None else None
+            ),
+            record_failure=(
+                self.registry.record_failure if self.registry is not None else None
+            ),
+            notifications=self.zmq_notifications,
+            stream_generator=self.generator,
+            nonstream_generator=self.d_first_token_generator_class,
+        )
+        router = APIRouter()
+        register_routes(
+            router,
+            completion=partial(completion, endpoint="/v1/completions", is_chat=False),
+            chat_completion=partial(
+                completion, endpoint="/v1/chat/completions", is_chat=True
+            ),
+            forward=self.post_to_instance,
+            fetch=self.get_from_instance,
+            add_instance=self.add_instance,
+            remove_instance=self.drain_and_remove_instance,
+            prefill_instances=self.prefill_instances,
+            decode_instances=self.decode_instances,
+            get_instances=(
+                self.registry.get_all_instances if self.registry is not None else None
+            ),
+            get_registered_models=(
+                self.registry.get_registered_models
+                if self.registry is not None
+                else None
+            ),
+            custom_completion=self.custom_create_completion,
+            custom_chat_completion=self.custom_create_chat_completion,
+        )
+        self.router = router
 
     async def forward_request(
         self,
@@ -751,8 +809,8 @@ class ProxyServer:
     def __init__(
         self,
         config: ProxyConfig,
-        create_completion: Optional[Callable[[Request], StreamingResponse]] = None,
-        create_chat_completion: Optional[Callable[[Request], StreamingResponse]] = None,
+        create_completion: RequestHandler | None = None,
+        create_chat_completion: RequestHandler | None = None,
     ):
         self.config = config
         self.port = config.port
@@ -887,6 +945,16 @@ class ProxyServer:
             all_decode=all_decode,
         )
 
+        self.zmq_notifications = None
+        if config.disaggregated_mode == "zmq":
+            zmq_config = config.zmq
+            assert zmq_config is not None
+            self.zmq_notifications = ZmqNotificationListener(
+                zmq_config.host,
+                zmq_config.port,
+                zmq_config.notification_timeout_seconds,
+            )
+
         self.proxy_instance = Proxy(
             prefill_instances=all_prefill,
             decode_instances=all_decode,
@@ -903,10 +971,35 @@ class ProxyServer:
             zmq_config=config.zmq,
             scheduling_options=config.scheduling_config.get(config.scheduling, {}),
             model_policy_options=config.scheduling_config,
+            zmq_notifications=self.zmq_notifications,
+        )
+
+        self.discovery = NodeDiscovery(
+            prefill_instances=self._all_prefill,
+            decode_instances=self._all_decode,
+            probe_interval=config.probe_interval_seconds,
+            wait_timeout=config.wait_timeout_seconds,
+            heartbeat_interval=config.heartbeat_interval_seconds,
+            registry=self.registry,
+            aggregated_instances=self._all_aggregated,
+            on_model_discovered=lambda model: asyncio.to_thread(
+                self.proxy_instance.ensure_tokenizer, model
+            ),
+        )
+        self.proxy_instance.discovery = self.discovery
+        self.proxy_instance.health_monitor = self.health_monitor
+
+    def create_app(self) -> FastAPI:
+        self.proxy_instance.setup_routes()
+        return create_app(
+            self.proxy_instance.router,
+            discovery=self.discovery,
+            health_monitor=self.health_monitor,
+            zmq_notifications=self.zmq_notifications,
         )
 
     def run_server(self) -> None:
-        app = create_app(self.config, self.proxy_instance, self.health_monitor)
+        app = self.create_app()
         config = uvicorn.Config(
             app,
             host=self.config.host,

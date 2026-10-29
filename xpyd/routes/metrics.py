@@ -1,18 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """The /metrics endpoint."""
 
-from typing import TYPE_CHECKING
-
 from fastapi import APIRouter
 from fastapi.responses import Response
 
 from xpyd.metrics import get_metrics
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
 
-
-def register(router: APIRouter, server: "Proxy") -> None:
+def register(router: APIRouter) -> None:
     async def get_metrics_endpoint():
         return Response(
             content=get_metrics(),

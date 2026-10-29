@@ -1,9 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Route registration aggregator for MicroDisaggregatedProxy."""
 
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter
+
+from xpyd.interfaces import (
+    AsyncRequestHandler,
+    GetFromInstance,
+    PostToInstance,
+    RequestHandler,
+)
+from xpyd.registry import InstanceInfo
 
 from .chat_completions import register as register_chat_completions
 from .completions import register as register_completions
@@ -21,24 +29,45 @@ from .status import register as register_status
 from .tokenize import register as register_tokenize
 from .version import register as register_version
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
 
-
-def register_routes(router: APIRouter, server: "Proxy") -> None:
-    """Register all route handlers on *router*, using *server* for state."""
-    register_completions(router, server)
-    register_chat_completions(router, server)
-    register_tokenize(router, server)
-    register_detokenize(router, server)
-    register_embeddings(router, server)
-    register_pooling(router, server)
-    register_score(router, server)
-    register_rerank(router, server)
-    register_invocations(router, server)
-    register_status(router, server)
-    register_instances(router, server)
-    register_health(router, server)
-    register_models(router, server)
-    register_version(router, server)
-    register_metrics(router, server)
+def register_routes(
+    router: APIRouter,
+    *,
+    completion: AsyncRequestHandler,
+    chat_completion: AsyncRequestHandler,
+    forward: PostToInstance,
+    fetch: GetFromInstance,
+    add_instance: Callable[[str, str], Awaitable[bool]],
+    remove_instance: Callable[[str, str, float], Awaitable[None]],
+    prefill_instances: list[str],
+    decode_instances: list[str],
+    get_instances: Callable[[], list[InstanceInfo]] | None = None,
+    get_registered_models: Callable[[], list[str]] | None = None,
+    custom_completion: RequestHandler | None = None,
+    custom_chat_completion: RequestHandler | None = None,
+) -> None:
+    """Wire each endpoint to only the operations and data it needs."""
+    register_completions(router, execute=completion, custom_handler=custom_completion)
+    register_chat_completions(
+        router, execute=chat_completion, custom_handler=custom_chat_completion
+    )
+    register_tokenize(router, forward=forward)
+    register_detokenize(router, forward=forward)
+    register_embeddings(router, forward=forward)
+    register_pooling(router, forward=forward)
+    register_score(router, forward=forward)
+    register_rerank(router, forward=forward)
+    register_invocations(router, forward=forward)
+    register_status(
+        router,
+        prefill_instances=prefill_instances,
+        decode_instances=decode_instances,
+        get_instances=get_instances,
+    )
+    register_instances(
+        router, add_instance=add_instance, remove_instance=remove_instance
+    )
+    register_health(router, fetch=fetch)
+    register_models(router, fetch=fetch, get_registered_models=get_registered_models)
+    register_version(router, fetch=fetch)
+    register_metrics(router)

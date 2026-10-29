@@ -22,8 +22,18 @@ from ._helpers import FakeResponse, build_app, fake_aiohttp, make_proxy
 
 
 def register(router, server):
-    for module in (health, models, version, metrics):
-        module.register(router, server)
+    health.register(router, fetch=server.get_from_instance)
+    version.register(router, fetch=server.get_from_instance)
+    models.register(
+        router,
+        fetch=server.get_from_instance,
+        get_registered_models=(
+            server.registry.get_registered_models
+            if server.registry is not None
+            else None
+        ),
+    )
+    metrics.register(router)
 
 
 class _HealthServer:

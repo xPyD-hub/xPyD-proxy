@@ -1,42 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """FastAPI application assembly and background service lifecycle."""
 
-import asyncio
-
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from xpyd.config import ProxyConfig
 from xpyd.discovery import NodeDiscovery
 from xpyd.errors import PROXY_ERROR, error_response
 from xpyd.health_monitor import HealthMonitor
+from xpyd.zmq_notifications import ZmqNotificationListener
 
 
 def create_app(
-    config: ProxyConfig,
-    proxy: "Proxy",  # noqa: F821
+    router: APIRouter,
+    *,
+    discovery: NodeDiscovery,
     health_monitor: HealthMonitor | None = None,
+    zmq_notifications: ZmqNotificationListener | None = None,
 ) -> FastAPI:
-    """Assemble an app around an existing proxy without starting a listener."""
-    discovery = NodeDiscovery(
-        prefill_instances=proxy.prefill_instances,
-        decode_instances=proxy.decode_instances,
-        probe_interval=config.probe_interval_seconds,
-        wait_timeout=config.wait_timeout_seconds,
-        heartbeat_interval=config.heartbeat_interval_seconds,
-        registry=proxy.registry,
-        aggregated_instances=[
-            address
-            for instances in proxy.aggregated_instances.values()
-            for address in instances
-        ],
-        on_model_discovered=lambda model: asyncio.to_thread(
-            proxy.ensure_tokenizer, model
-        ),
-    )
-    proxy.discovery = discovery
-    proxy.health_monitor = health_monitor
-
+    """Mount a router and manage explicitly supplied background services."""
     app = FastAPI()
     app.add_middleware(
         CORSMiddleware,
@@ -65,18 +46,8 @@ def create_app(
 
     @app.on_event("startup")
     async def _start_discovery():
-        if config.disaggregated_mode == "zmq":
-            from xpyd.zmq_notifications import ZmqNotificationListener
-
-            zmq_config = config.zmq
-            assert zmq_config is not None
-            listener = ZmqNotificationListener(
-                zmq_config.host,
-                zmq_config.port,
-                zmq_config.notification_timeout_seconds,
-            )
-            await listener.start()
-            proxy.zmq_notifications = listener
+        if zmq_notifications is not None:
+            await zmq_notifications.start()
         await discovery.start()
         if health_monitor:
             await health_monitor.start()
@@ -84,10 +55,10 @@ def create_app(
     @app.on_event("shutdown")
     async def _stop_discovery():
         await discovery.stop()
-        if proxy.zmq_notifications is not None:
-            await proxy.zmq_notifications.stop()
+        if zmq_notifications is not None:
+            await zmq_notifications.stop()
         if health_monitor:
             await health_monitor.stop()
 
-    app.include_router(proxy.router)
+    app.include_router(router)
     return app

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from xpyd.completion_handler import handle_completion
+from xpyd.completion_handler import CompletionOptions, handle_completion
 from xpyd.proxy import Proxy
 from xpyd.registry import InstanceRegistry
 from xpyd.scheduler import SchedulingContext, default_registry
@@ -30,6 +30,21 @@ def make_proxy(strategy="roundrobin", override=None, registry=True):
         aggregated_instances={MODEL: list(NODES)},
         model_schedulers={MODEL: override} if override else {},
     )
+
+
+def completion_arguments(proxy):
+    return {
+        "options": CompletionOptions(),
+        "reserve": proxy.reserve,
+        "forward_request": proxy.forward_request,
+        "count_tokens": proxy.get_total_token_length,
+        "get_tokenizer": proxy.get_tokenizer,
+        "tokenize_on_backend": proxy.tokenize_on_backend,
+        "is_aggregated_model": proxy._is_aggregated_model,
+        "get_registered_models": proxy.registry.get_registered_models,
+        "record_success": proxy.registry.record_success,
+        "record_failure": proxy.registry.record_failure,
+    }
 
 
 def test_model_topology_detection():
@@ -152,7 +167,12 @@ async def test_real_stream_handler_releases_and_records_outcome(failure):
         patch.object(proxy.registry, "record_success") as success,
         patch.object(proxy.registry, "record_failure") as failed,
     ):
-        response = await handle_completion("/v1/completions", request, proxy, False)
+        response = await handle_completion(
+            request,
+            endpoint="/v1/completions",
+            is_chat=False,
+            **completion_arguments(proxy),
+        )
         if failure is RuntimeError:
             with pytest.raises(RuntimeError):
                 _ = [chunk async for chunk in response.body_iterator]
@@ -176,7 +196,12 @@ async def test_nonstream_cancellation_releases_reservation():
     proxy.forward_request = forward
     with patch("xpyd.completion_handler.track_request_end") as ended:
         with pytest.raises(asyncio.CancelledError):
-            await handle_completion("/v1/completions", request, proxy, False)
+            await handle_completion(
+                request,
+                endpoint="/v1/completions",
+                is_chat=False,
+                **completion_arguments(proxy),
+            )
         ended.assert_called_once()
     assert all(proxy.registry.get_active_requests(address) == 0 for address in NODES)
 
@@ -195,7 +220,12 @@ async def test_closing_stream_is_not_a_success():
 
     proxy.forward_request = forward
     with patch.object(proxy.registry, "record_success") as success:
-        response = await handle_completion("/v1/completions", request, proxy, False)
+        response = await handle_completion(
+            request,
+            endpoint="/v1/completions",
+            is_chat=False,
+            **completion_arguments(proxy),
+        )
         await response.body_iterator.__anext__()
         await response.body_iterator.aclose()
         success.assert_not_called()

@@ -1,22 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """The /v1/models endpoint."""
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
+from xpyd.interfaces import GetFromInstance
 
 # Fixed epoch timestamp for model listing (avoids changing on every request).
 _MODEL_CREATED_EPOCH = 0
 
 
-def register(router: APIRouter, server: "Proxy") -> None:
+def register(
+    router: APIRouter,
+    *,
+    fetch: GetFromInstance,
+    get_registered_models: Callable[[], list[str]] | None = None,
+) -> None:
     async def get_models():
-        if server.registry is not None:
-            models = server.registry.get_registered_models()
+        if get_registered_models is not None:
+            models = get_registered_models()
             data = [
                 {
                     "id": model,
@@ -30,7 +34,7 @@ def register(router: APIRouter, server: "Proxy") -> None:
                 content={"object": "list", "data": data},
                 status_code=200,
             )
-        return await server.get_from_instance("/v1/models")
+        return await fetch("/v1/models")
 
     router.get("/v1/models", response_class=JSONResponse)(get_models)
     router.options("/v1/models")(lambda: None)
