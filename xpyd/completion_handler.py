@@ -10,17 +10,11 @@ import time
 import uuid
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator, Callable, Mapping
-from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from xpyd.errors import INVALID_REQUEST, PROXY_ERROR, error_response
-from xpyd.scheduler import Reservation, SchedulingContext
-
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
-
 from xpyd.metrics import (
     FirstTokenTracker,
     proxy_decode_active_requests,
@@ -33,6 +27,7 @@ from xpyd.metrics import (
     track_request_end,
     track_request_start,
 )
+from xpyd.scheduler import Reservation, SchedulingContext
 
 logger = logging.getLogger("xpyd.proxy")
 
@@ -140,7 +135,7 @@ def validate_completion_request(request: dict, is_chat: bool) -> JSONResponse | 
 
 
 def extract_prompt_info(
-    request: dict, is_chat: bool, server: Proxy
+    request: dict, is_chat: bool, server: "Proxy"  # noqa: F821
 ) -> tuple[int, int, str]:
     """Extract prompt metrics. Returns (total_length, max_tokens, prompt_text)."""
     model = request.get("model", "")
@@ -227,7 +222,9 @@ def build_zmq_prepare_request(
     return prepare
 
 
-def tokenize_zmq_prompt(request: dict, is_chat: bool, server: Proxy) -> list[int]:
+def tokenize_zmq_prompt(
+    request: dict, is_chat: bool, server: "Proxy"  # noqa: F821
+) -> list[int]:
     """Tokenize the exact prompt used by the LMCache sender and receiver."""
     tokenizer = server.get_tokenizer(request.get("model", ""))
     if tokenizer is None:
@@ -543,7 +540,10 @@ async def _zmq_prefill_only_generator(
 
 
 async def handle_completion(
-    endpoint: str, raw_request: Request, server: Proxy, is_chat: bool
+    endpoint: str,
+    raw_request: Request,
+    server: "Proxy",  # noqa: F821
+    is_chat: bool,
 ) -> JSONResponse | StreamingResponse:
     """Unified completion handler for both /v1/completions and /v1/chat/completions."""
     _metrics_start = track_request_start(endpoint)
@@ -1011,7 +1011,7 @@ async def _handle_aggregated_completion(
     endpoint: str,
     request: dict,
     raw_request: Request,
-    server: Proxy,
+    server: "Proxy",  # noqa: F821
     model: str,
     total_length: int,
     max_tokens: int,

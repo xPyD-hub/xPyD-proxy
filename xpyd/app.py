@@ -2,7 +2,6 @@
 """FastAPI application assembly and background service lifecycle."""
 
 import asyncio
-from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,13 +11,10 @@ from xpyd.discovery import NodeDiscovery
 from xpyd.errors import PROXY_ERROR, error_response
 from xpyd.health_monitor import HealthMonitor
 
-if TYPE_CHECKING:
-    from xpyd.proxy import Proxy
-
 
 def create_app(
     config: ProxyConfig,
-    proxy: "Proxy",
+    proxy: "Proxy",  # noqa: F821
     health_monitor: HealthMonitor | None = None,
 ) -> FastAPI:
     """Assemble an app around an existing proxy without starting a listener."""

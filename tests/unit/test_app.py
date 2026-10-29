@@ -22,11 +22,15 @@ def test_support_modules_do_not_import_proxy_runtime():
         [
             sys.executable,
             "-c",
-            "import importlib, sys\n"
-            "for name in ('xpyd.cli', 'xpyd.app', 'xpyd.routes', "
-            "'xpyd.completion_handler'):\n"
-            "    importlib.import_module(name)\n"
-            "    assert 'xpyd.proxy' not in sys.modules, name\n",
+            "\n".join(
+                [
+                    "import importlib, sys",
+                    "for name in ('xpyd.cli', 'xpyd.app', 'xpyd.routes',",
+                    "             'xpyd.completion_handler'):",
+                    "    importlib.import_module(name)",
+                    "    assert 'xpyd.proxy' not in sys.modules, name",
+                ]
+            ),
         ],
         capture_output=True,
         text=True,
