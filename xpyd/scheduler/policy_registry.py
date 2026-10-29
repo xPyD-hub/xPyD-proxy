@@ -51,7 +51,7 @@ class PolicyRegistry:
         return name in self._policies
 
     def get_policy_class(self, name: str) -> type[SchedulingPolicy]:
-        """Resolve a policy and its declared data requirements without constructing it."""
+        """Resolve a policy class and its requirements without constructing it."""
         if name not in self._policies:
             raise ValueError(
                 f"Unknown scheduling policy: {name!r}. "
