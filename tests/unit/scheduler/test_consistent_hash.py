@@ -154,7 +154,7 @@ class TestConsistentHashPolicy:
         registry.add("decode", "w1")
         registry.mark_healthy("w1")
         registry.begin_draining("decode", "w1")
-        policy = ConsistentHashPolicy(workers=["w1"], registry=registry)
+        policy = ConsistentHashPolicy(workers=["w1"])
 
         selected = Scheduler(registry).reserve(
             policy,

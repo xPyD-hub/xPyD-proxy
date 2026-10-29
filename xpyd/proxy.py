@@ -49,6 +49,7 @@ from xpyd.scheduler import (
     SchedulingPolicy,
     default_registry,
 )
+from xpyd.utils import query_instance_model_len
 from xpyd.zmq_notifications import ZmqNotificationListener
 
 
@@ -121,9 +122,7 @@ class Proxy:
         self.tokenizer_path = tokenizer_path
         self._tokenizers: dict[str, Any] = {}
         self._round_robin_models: set[str] = set()
-        self._round_robin_policy = default_registry.build(
-            "roundrobin", registry=registry
-        )
+        self._round_robin_policy = default_registry.build("roundrobin")
         self.disaggregated_mode = disaggregated_mode
         self.first_token_source = first_token_source
         self.zmq_config = zmq_config
@@ -242,7 +241,6 @@ class Proxy:
         strategy = self.model_schedulers.get(model)
         options: dict[str, Any] = {
             "workers": instances,
-            "registry": self.registry,
             "tokenizer": self.get_tokenizer(model),
         }
         if strategy:
@@ -783,7 +781,6 @@ class Proxy:
 
 def _create_scheduling_policy(
     config: ProxyConfig,
-    registry: Optional[InstanceRegistry] = None,
     all_prefill: Optional[list[str]] = None,
     all_decode: Optional[list[str]] = None,
 ) -> SchedulingPolicy:
@@ -794,12 +791,20 @@ def _create_scheduling_policy(
     strategy = config.scheduling
     strategy_opts = config.scheduling_config.get(strategy, {})
 
+    policy_class = default_registry.get_policy_class(strategy)
+    model_lengths: dict[str, int] = {}
+    if policy_class.requires_model_lengths and (prefill or decode):
+        addresses = list(prefill) + list(decode)
+        model_lengths = dict(
+            zip(addresses, query_instance_model_len(addresses), strict=True)
+        )
+
     return default_registry.build(
         strategy,
         prefill_instances=prefill,
         decode_instances=decode,
         workers=list(prefill) + list(decode),
-        registry=registry,
+        model_lengths=model_lengths,
         **strategy_opts,
     )
 
@@ -940,7 +945,6 @@ class ProxyServer:
 
         global_policy = _create_scheduling_policy(
             config,
-            self.registry,
             all_prefill=all_prefill,
             all_decode=all_decode,
         )

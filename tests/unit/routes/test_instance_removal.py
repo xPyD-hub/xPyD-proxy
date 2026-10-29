@@ -24,7 +24,7 @@ def _proxy(registry: InstanceRegistry) -> Proxy:
         decode_instances=["127.0.0.1:8200", "127.0.0.1:8201"],
         model="test/model",
         registry=registry,
-        scheduling_policy=RoundRobinSchedulingPolicy(registry=registry),
+        scheduling_policy=RoundRobinSchedulingPolicy(),
     )
     proxy.health_monitor = MagicMock()
     proxy.discovery = MagicMock()
@@ -170,15 +170,11 @@ async def test_load_balanced_scheduler_can_select_runtime_instance() -> None:
     registry.add("decode", "127.0.0.1:8200", model="test/model")
     registry.mark_healthy("127.0.0.1:8100")
     registry.mark_healthy("127.0.0.1:8200")
-    with patch(
-        "xpyd.scheduler.load_balanced.query_instance_model_len",
-        side_effect=lambda instances: [4096] * len(instances),
-    ):
-        policy = LoadBalancedScheduler(
-            ["127.0.0.1:8100"],
-            ["127.0.0.1:8200"],
-            registry=registry,
-        )
+    policy = LoadBalancedScheduler(
+        ["127.0.0.1:8100"],
+        ["127.0.0.1:8200"],
+        model_lengths={"127.0.0.1:8100": 4096, "127.0.0.1:8200": 4096},
+    )
     proxy = _proxy(registry)
     proxy.scheduling_policy = policy
     proxy.prefill_instances = policy.prefill_instances

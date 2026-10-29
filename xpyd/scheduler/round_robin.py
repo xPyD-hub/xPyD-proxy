@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 class RoundRobinSchedulingPolicy(SchedulingPolicy):
     """Cycle through instances in order, ignoring load."""
 
-    def __init__(self, registry=None):
-        super().__init__(registry=registry)
+    def __init__(self):
+        super().__init__()
         self._positions: dict[tuple[str, str], int] = {}
         logger.info("RoundRobinSchedulingPolicy initialized")
 
@@ -24,11 +24,11 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
         prefill_instances=(),
         decode_instances=(),
         workers=(),
-        registry=None,
+        model_lengths=None,
         tokenizer=None,
         **options,
     ):
-        return cls(registry=registry, **options)
+        return cls(**options)
 
     def select_node(
         self, context: SchedulingContext, candidates: Sequence[Candidate]

@@ -10,8 +10,8 @@ from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, Scheduli
 class PowerOfTwoPolicy(SchedulingPolicy):
     """Choose the less-loaded of two eligible candidates."""
 
-    def __init__(self, workers=None, registry=None):
-        super().__init__(registry=registry)
+    def __init__(self, workers=None):
+        super().__init__()
         self._last_pair: tuple[str, ...] = ()
 
     @property

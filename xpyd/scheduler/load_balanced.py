@@ -2,10 +2,9 @@
 """Load-balanced scheduling policy."""
 
 import logging
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from xpyd.scheduler.scheduler_base import Candidate, SchedulingContext, SchedulingPolicy
-from xpyd.utils import query_instance_model_len
 
 logger = logging.getLogger("xpyd.proxy")
 
@@ -13,9 +12,20 @@ logger = logging.getLogger("xpyd.proxy")
 class LoadBalancedScheduler(SchedulingPolicy):
     """Select the least-loaded instance, respecting model-length limits."""
 
+    requires_model_lengths = True
+
     def __init__(
-        self, prefill_instances: list[str], decode_instances: list[str], registry=None
+        self,
+        prefill_instances: Sequence[str],
+        decode_instances: Sequence[str],
+        *,
+        model_lengths: Mapping[str, int],
     ):
+        missing = (
+            set(prefill_instances) | set(decode_instances)
+        ) - model_lengths.keys()
+        if missing:
+            raise ValueError(f"Missing model lengths for instances: {sorted(missing)}")
         self.prefill_utils_counter = [0] * len(prefill_instances)
         self.prefill_bs_counter = [0] * len(prefill_instances)
         self.decode_kv_utils_counter = [0] * len(decode_instances)
@@ -42,12 +52,14 @@ class LoadBalancedScheduler(SchedulingPolicy):
         self.decode_schedule_index = 0
         self.decode_schedule_completion_index = 0
 
-        self.prefill_model_len = query_instance_model_len(prefill_instances)
-        self.decode_model_len = query_instance_model_len(decode_instances)
+        self.prefill_model_len = [
+            model_lengths[address] for address in prefill_instances
+        ]
+        self.decode_model_len = [model_lengths[address] for address in decode_instances]
 
         logger.info("Prefill instance model lens: %s", self.prefill_model_len)
         logger.info("Decode instance model lens: %s", self.decode_model_len)
-        super().__init__(registry=registry)
+        super().__init__()
 
     @classmethod
     def from_config(
@@ -56,11 +68,16 @@ class LoadBalancedScheduler(SchedulingPolicy):
         prefill_instances=(),
         decode_instances=(),
         workers=(),
-        registry=None,
+        model_lengths=None,
         tokenizer=None,
         **options,
     ):
-        return cls(prefill_instances, decode_instances, registry=registry, **options)
+        return cls(
+            prefill_instances,
+            decode_instances,
+            model_lengths=model_lengths if model_lengths is not None else {},
+            **options,
+        )
 
     def select_node(
         self, context: SchedulingContext, candidates: Sequence[Candidate]

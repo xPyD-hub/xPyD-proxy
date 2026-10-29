@@ -53,7 +53,8 @@ def test_support_modules_do_not_import_proxy_runtime():
 
 
 @pytest.mark.parametrize("topology", ["disaggregated", "aggregated", "mixed"])
-def test_proxy_first_discovery_loss_and_reconnection(topology):
+@pytest.mark.parametrize("strategy", ["roundrobin", "loadbalanced"])
+def test_proxy_first_discovery_loss_and_reconnection(topology, strategy):
     roles = []
     if topology != "aggregated":
         roles.extend(["prefill", "decode", "decode"])
@@ -73,13 +74,28 @@ def test_proxy_first_discovery_loss_and_reconnection(topology):
             }
             for role, address in zip(roles, addresses)
         ],
-        scheduling="roundrobin",
+        scheduling=strategy,
         probe_interval_seconds=3600,
         heartbeat_interval_seconds=0.001,
         health_check={"enabled": True, "interval_seconds": 3600},
     )
-    server = ProxyServer(config)
+    with patch(
+        "requests.get", side_effect=ConnectionError("Backends are offline")
+    ) as capacity_query:
+        server = ProxyServer(config)
     proxy = server.proxy_instance
+    if strategy == "loadbalanced":
+        assert capacity_query.call_count == roles.count("prefill") + roles.count(
+            "decode"
+        )
+        assert proxy.scheduling_policy.prefill_model_len == [131072] * roles.count(
+            "prefill"
+        )
+        assert proxy.scheduling_policy.decode_model_len == [131072] * roles.count(
+            "decode"
+        )
+    else:
+        capacity_query.assert_not_called()
     proxy.ensure_tokenizer = Mock(return_value=True)
     forwarded = []
 
